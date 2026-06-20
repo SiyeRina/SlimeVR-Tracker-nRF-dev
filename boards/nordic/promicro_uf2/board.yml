@@ -1,0 +1,20 @@
+# Copyright (c) 2024 Nordic Semiconductor ASA
+# SPDX-License-Identifier: Apache-2.0
+
+# The 'smspi' board variant is targeted promicro stack with the SM-ICM45686-AK09940A
+# where ICM is on SPI, AK is on I2C, external clock disabled.
+# The default_spi variant is targeted promicro with the upstream default configuration
+
+board:
+  name: promicro_uf2
+  vendor: nordic
+  socs:
+    - name: nrf52840
+      variants:
+      - name: 'i2c'
+      - name: 'spi'
+      - name: 'smspi'
+      - name: 'chrysalis'
+      - name: 'lwkj_icm45v1'
+      - name: 'default_spi'
+      - name: 'default_i2c'
