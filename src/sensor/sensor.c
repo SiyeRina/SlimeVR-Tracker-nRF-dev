@@ -399,7 +399,7 @@ int sensor_scan(void)
 		sensor_interface_register_sensor_imu_spi(&sensor_imu_spi_dev);
 #endif
 
-	/* BNO086/BNO085 SHTP probe -- dedicated I2C protocol, no WHO_AM_I register.
+	/* BNO08x (BNO085/BNO086) SHTP probe -- dedicated I2C protocol, no WHO_AM_I register.
 	 * Must run BEFORE the standard I2C scan because BNO08x doesn't respond
 	 * to standard register reads and standard scan may interfere with SHTP. */
 #if SENSOR_IMU_EXISTS

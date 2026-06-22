@@ -53,7 +53,7 @@
 #include <math.h>
 #include <hal/nrf_gpio.h>
 
-LOG_MODULE_REGISTER(BNO08X, CONFIG_BNO08X_LOG_LEVEL);
+LOG_MODULE_REGISTER(BNO08X, LOG_LEVEL_INF);
 
 
 /* =========================================================================

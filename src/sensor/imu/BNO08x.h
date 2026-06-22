@@ -43,7 +43,8 @@
 
 /* SHTP Channels */
 #define BNO08X_SHTP_CH_COMMAND     0
-#define BNO08X_SHTP_CH_CONTROL     1
+#define BNO08X_SHTP_CH_EXECUTABLE  1
+#define BNO08X_SHTP_CH_CONTROL     2
 #define BNO08X_SHTP_CH_INPUT       3
 
 /* =========================================================================
