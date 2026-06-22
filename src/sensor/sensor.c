@@ -227,14 +227,14 @@ static const sensor_imu_t *sensor_imu = &sensor_imu_none;
 static const sensor_mag_t *sensor_mag = &sensor_mag_none;
 
 #if CONFIG_SENSOR_USE_TCAL
-// Temperature used by T-Cal (°C).
+// Temperature used by T-Cal (掳C).
 // Low-pass filtered to reduce IMU temperature sensor noise which can cause compensation jitter.
 #ifndef SENSOR_TCAL_TEMP_FILTER_TAU_MS
 #define SENSOR_TCAL_TEMP_FILTER_TAU_MS 500  // ms
 #endif
 
-static float sensor_tcal_temp = 25.0f;      // Filtered temperature (°C)
-static float sensor_tcal_temp_raw = 25.0f;  // Last raw temperature reading (°C)
+static float sensor_tcal_temp = 25.0f;      // Filtered temperature (掳C)
+static float sensor_tcal_temp_raw = 25.0f;  // Last raw temperature reading (掳C)
 static bool sensor_tcal_temp_filter_initialized = false;
 static int64_t sensor_tcal_temp_filter_last_ms = 0;
 #endif
@@ -399,7 +399,7 @@ int sensor_scan(void)
 		sensor_interface_register_sensor_imu_spi(&sensor_imu_spi_dev);
 #endif
 
-	/* BNO086/BNO085 SHTP probe �?dedicated I2C protocol, no WHO_AM_I register.
+	/* BNO086/BNO085 SHTP probe -- dedicated I2C protocol, no WHO_AM_I register.
 	 * Must run BEFORE the standard I2C scan because BNO08x doesn't respond
 	 * to standard register reads and standard scan may interfere with SHTP. */
 #if SENSOR_IMU_EXISTS
@@ -932,7 +932,7 @@ static void sensor_update_sensor_state(void)
 	bool in_test_mode = test_mode_get();
 	bool ota_suppressed_now = esb_ota_is_active() || connection_get_ota_suppressed();
 
-	/* Reset activity timer on OTA suppression→unsuppression transition
+	/* Reset activity timer on OTA suppression鈫抲nsuppression transition
 	 * to prevent accumulated idle time from immediately triggering sleep
 	 * when suppression lifts between OTA batches. */
 	if (was_ota_suppressed && !ota_suppressed_now) {
@@ -1774,7 +1774,7 @@ void sensor_loop(void)
 					mag_calibrated = false;
 				} else {
 					// Track calibrated mag norm for online quality assessment
-					// Only track when VQF reports no magnetic disturbance �?including
+					// Only track when VQF reports no magnetic disturbance -- including
 					// disturbed samples inflates norm CV and prevents online cal from stabilizing
 #if CONFIG_SENSOR_USE_VQF
 					if (!vqf_get_mag_dist_detected()) {
@@ -1892,7 +1892,7 @@ void sensor_loop(void)
 #if CONFIG_SENSOR_GYRO_OVERSAMPLING > 1
 				// With gyro oversampling, expected fusion timesteps is reduced by oversampling factor
 				float expected_gyro_timesteps_f = expected_gyro_samples / CONFIG_SENSOR_GYRO_OVERSAMPLING;
-				// Only warn if actual count is significantly off (more than ±50% or at least ±1)
+				// Only warn if actual count is significantly off (more than 卤50% or at least 卤1)
 				// This handles fractional expected values better
 				if (g_count) {
 					int min_expected = (int)expected_gyro_timesteps_f; // floor
@@ -2055,7 +2055,7 @@ void sensor_loop(void)
 						(double)debug_device_quat[0], (double)debug_device_quat[1], (double)debug_device_quat[2], (double)debug_device_quat[3],
 						(double)debug_reported_quat[0], (double)debug_reported_quat[1], (double)debug_reported_quat[2], (double)debug_reported_quat[3]);
 #endif
-					printk("     Rest:%c RestDev[G:%.3f,A:%.3f] Bias[%.3f,%.3f,%.3f]°/s Sigma:%.3f°/s Delta:%.2f°\n",
+					printk("     Rest:%c RestDev[G:%.3f,A:%.3f] Bias[%.3f,%.3f,%.3f]掳/s Sigma:%.3f掳/s Delta:%.2f掳\n",
 						vqf_info.rest_detected ? 'Y' : 'N',
 						(double)vqf_info.rest_deviations[0], (double)vqf_info.rest_deviations[1],
 						(double)vqf_info.bias[0], (double)vqf_info.bias[1], (double)vqf_info.bias[2],
@@ -2085,13 +2085,13 @@ void sensor_loop(void)
 						}
 					}
 					if (mag_enabled) {
-						printk("     Mag: DisAng:%.2f° CorrRate:%.2f°/s\n",
+						printk("     Mag: DisAng:%.2f掳 CorrRate:%.2f掳/s\n",
 							(double)vqf_info.mag_dis_angle, (double)vqf_info.mag_corr_rate);
-						printk("     MagDist:%c MagRefNorm:%.3f MagRefDip:%.2f° MagNorm:%.3f MagDip:%.2f°\n",
+						printk("     MagDist:%c MagRefNorm:%.3f MagRefDip:%.2f掳 MagNorm:%.3f MagDip:%.2f掳\n",
 							vqf_info.mag_dist_detected ? 'Y' : 'N',
 							(double)vqf_info.mag_ref_norm, (double)vqf_info.mag_ref_dip,
 							(double)vqf_info.mag_norm, (double)vqf_info.mag_dip);
-						printk("     MagT: undist:%.2fs reject:%.2fs candT:%.2fs candNorm:%.3f candDip:%.2f°\n",
+						printk("     MagT: undist:%.2fs reject:%.2fs candT:%.2fs candNorm:%.3f candDip:%.2f掳\n",
 							(double)vqf_info.mag_undisturbed_t, (double)vqf_info.mag_reject_t,
 							(double)vqf_info.mag_candidate_t,
 							(double)vqf_info.mag_candidate_norm, (double)vqf_info.mag_candidate_dip);
@@ -2319,7 +2319,7 @@ void main_imu_restart(void)
 			vqf_set_mag_ref(saved_ref_norm, saved_ref_dip);
 #endif
 		// Reset mag timing so the first post-restart update uses the nominal fallback
-		// instead of a potentially stale diff (which could be > 10s �?updateMag fallback path).
+		// instead of a potentially stale diff (which could be > 10s -> updateMag fallback path).
 		last_mag_fusion_ticks = 0;
 	}
 }

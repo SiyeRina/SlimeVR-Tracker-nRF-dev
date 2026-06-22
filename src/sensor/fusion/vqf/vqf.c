@@ -31,9 +31,7 @@
 #include <cmsis_core.h>
 #endif
 
-#include "../src/vqf.h" // conflicting with vqf.h in local path
-
-#include "../vqf/vqf.h" // conflicting with vqf.h in vqf-c
+#include "vqf.h"
 
 #include "retained.h" // for BUILD_ASSERT on fusion_data size
 
