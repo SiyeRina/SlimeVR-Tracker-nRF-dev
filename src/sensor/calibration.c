@@ -37,7 +37,7 @@
 #include "magneto/magneto1_4.h"
 #include "imu/BMI270.h"
 #if CONFIG_SENSOR_USE_VQF
-#include "fusion/vqf/vqf.h"
+#include "fusion/vqf/vqf_fusion.h"
 #endif
 
 #include "calibration.h"

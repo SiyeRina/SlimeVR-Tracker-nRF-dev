@@ -23,7 +23,7 @@
 #ifndef SLIMENRF_SENSOR_FUSIONS
 #define SLIMENRF_SENSOR_FUSIONS
 
-#include "vqf/vqf.h"
+#include "vqf/vqf_fusion.h"
 #if IS_ENABLED(CONFIG_SENSOR_USE_EQF)
 #include "eqf/eqf.h"
 #endif

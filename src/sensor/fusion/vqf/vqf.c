@@ -31,7 +31,8 @@
 #include <cmsis_core.h>
 #endif
 
-#include "vqf.h"
+#include "vqf.h"          /* upstream VQF library types (vqf_params_t, etc.) */
+#include "vqf_fusion.h"   /* local wrapper API */
 
 #include "retained.h" // for BUILD_ASSERT on fusion_data size
 

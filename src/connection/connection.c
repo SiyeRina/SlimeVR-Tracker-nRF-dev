@@ -21,7 +21,7 @@
 	THE SOFTWARE.
 */
 #include "globals.h"
-#include "sensor/fusion/vqf/vqf.h"
+#include "sensor/fusion/vqf/vqf_fusion.h"
 #include "sensor/sensor.h"
 #include "connection.h"
 #include "util.h"
