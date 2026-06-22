@@ -399,13 +399,13 @@ int sensor_scan(void)
 		sensor_interface_register_sensor_imu_spi(&sensor_imu_spi_dev);
 #endif
 
-	/* BNO086/BNO085 SHTP probe â€” dedicated I2C protocol, no WHO_AM_I register.
+	/* BNO086/BNO085 SHTP probe â€?dedicated I2C protocol, no WHO_AM_I register.
 	 * Must run BEFORE the standard I2C scan because BNO08x doesn't respond
 	 * to standard register reads and standard scan may interfere with SHTP. */
 #if SENSOR_IMU_EXISTS
 	if (imu_id < 0)
 	{
-		imu_id = bno086_scan_probe(&sensor_imu_dev, &sensor_imu_dev_reg, true);
+		imu_id = bno08x_scan_probe(&sensor_imu_dev, &sensor_imu_dev_reg, true);
 	}
 #endif
 
@@ -1774,7 +1774,7 @@ void sensor_loop(void)
 					mag_calibrated = false;
 				} else {
 					// Track calibrated mag norm for online quality assessment
-					// Only track when VQF reports no magnetic disturbance â€” including
+					// Only track when VQF reports no magnetic disturbance â€?including
 					// disturbed samples inflates norm CV and prevents online cal from stabilizing
 #if CONFIG_SENSOR_USE_VQF
 					if (!vqf_get_mag_dist_detected()) {
@@ -2319,7 +2319,7 @@ void main_imu_restart(void)
 			vqf_set_mag_ref(saved_ref_norm, saved_ref_dip);
 #endif
 		// Reset mag timing so the first post-restart update uses the nominal fallback
-		// instead of a potentially stale diff (which could be > 10s â†’ updateMag fallback path).
+		// instead of a potentially stale diff (which could be > 10s â†?updateMag fallback path).
 		last_mag_fusion_ticks = 0;
 	}
 }

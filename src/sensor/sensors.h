@@ -34,7 +34,7 @@
 #include "imu/LSM6DSM.h"
 #include "imu/LSM6DSO.h"
 #include "imu/LSM6DSV.h"
-#include "imu/BNO086.h"
+#include "imu/BNO08x.h"
 
 #include "mag/AK09940.h"
 #include "mag/BMM150.h"
@@ -95,8 +95,8 @@ const sensor_imu_t *sensor_imus[] = {
 	&sensor_imu_none,
 	&sensor_imu_lsm6dsv,
 	&sensor_imu_lsm6dsv,  // compatible with driver
-	&sensor_imu_bno086,
-	&sensor_imu_bno086   // BNO085 uses same SHTP driver
+	&sensor_imu_bno08x,
+	&sensor_imu_bno08x   // BNO085 uses same SHTP driver
 };
 const int i2c_dev_imu_addr_count = 2;
 const uint8_t i2c_dev_imu_addr[] = {
