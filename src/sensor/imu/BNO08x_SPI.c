@@ -676,7 +676,7 @@ int bno08x_spi_scan_probe(struct spi_dt_spec *spi_dev, uint8_t *reg, bool interf
 		}
 
 		/* Read remaining payload + CRC */
-		uint32_t remaining = pld_len + BNO08X_SPI_CRC_SIZE;
+		uint32_t remaining = pld_len + BNO08X_SPI_SHTP_CRC_SIZE;
 		rx_buf.buf = rx_pkt + BNO08X_SPI_SHTP_HEADER_SIZE;
 		rx_buf.len = remaining;
 		rx.count = 1;
@@ -745,7 +745,7 @@ int bno08x_spi_scan_probe(struct spi_dt_spec *spi_dev, uint8_t *reg, bool interf
 			continue;
 		}
 
-		uint32_t remaining = pld_len + BNO08X_SPI_CRC_SIZE;
+		uint32_t remaining = pld_len + BNO08X_SPI_SHTP_CRC_SIZE;
 		rx_buf.buf = rx_pkt + BNO08X_SPI_SHTP_HEADER_SIZE;
 		rx_buf.len = remaining;
 		rx.count = 1;

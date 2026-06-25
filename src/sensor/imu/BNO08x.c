@@ -287,7 +287,7 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
 
     (void)clock_rate;
 
-    LOG_INF("BNO08x init: accel %.3f s, gyro %.3f s", accel_time, gyro_time);
+    LOG_INF("BNO08x init: accel %.3f s, gyro %.3f s", (double)accel_time, (double)gyro_time);
 
     /* Wait for boot advertisement */
     uint8_t pkt_buf[BNO08X_SHTP_MAX_PACKET];
