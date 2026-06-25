@@ -627,6 +627,11 @@ void bno08x_spi_get_quaternion(float q[4])
 
 int bno08x_spi_scan_probe(struct spi_dt_spec *spi_dev, uint8_t *reg, bool interface_register)
 {
+	if (!device_is_ready(spi_dev->bus)) {
+		LOG_ERR("SPI bus not ready, skipping BNO08x SPI probe");
+		return -1;
+	}
+
 	struct spi_buf tx_buf = {.len = 0};
 	struct spi_buf_set tx = {.buffers = &tx_buf, .count = 1};
 	struct spi_buf rx_buf = {.len = 0};

@@ -24,10 +24,15 @@
 #include <zephyr/types.h>
 #include <zephyr/drivers/spi.h>
 
-LOG_MODULE_REGISTER(sensor_scan_spi, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(sensor_scan_spi, LOG_LEVEL_INF);
 
 int sensor_scan_spi(struct spi_dt_spec *bus, uint8_t *spi_dev_reg, int dev_addr_count, const uint8_t dev_reg[], const uint8_t dev_id[], const int dev_ids[])
 {
+	if (!device_is_ready(bus->bus)) {
+		LOG_ERR("SPI bus not ready, skipping scan");
+		return -1;
+	}
+
 	uint8_t buf[3] = {0};
 	struct spi_buf tx_buf = {.len = 1};
 	const struct spi_buf_set tx = {.buffers = &tx_buf, .count = 1};
