@@ -131,7 +131,9 @@ enum dev_imu {
 	IMU_LSM6DSV,
 	IMU_ISM330BX,  // LSM6DSV16B/ISM330BX
 	IMU_BNO086,     // BNO086 (SHTP protocol, I2C 0x4A/0x4B)
-	IMU_BNO085      // BNO085 (SHTP protocol, compatible with BNO086 driver)
+	IMU_BNO085,     // BNO085 (SHTP protocol, compatible with BNO086 driver)
+	IMU_BNO086_SPI, // BNO086 (SHTP protocol, SPI)
+	IMU_BNO085_SPI  // BNO085 (SHTP protocol, SPI)
 };
 
 enum dev_mag {
