@@ -291,7 +291,7 @@ int bno08x_spi_init(float clock_rate, float accel_time, float gyro_time,
 
 	(void)clock_rate;
 
-	LOG_INF("BNO08x SPI init: accel %.3f s, gyro %.3f s", accel_time, gyro_time);
+	LOG_INF("BNO08x SPI init: accel %.3f s, gyro %.3f s", (double)accel_time, (double)gyro_time);
 
 	/* Wait for boot advertisement */
 	uint8_t pkt_buf[BNO08X_SPI_SHTP_MAX_PACKET];
@@ -368,7 +368,7 @@ int bno08x_spi_init(float clock_rate, float accel_time, float gyro_time,
 	memset(bno_spi.cached_accel, 0, sizeof(bno_spi.cached_accel));
 	memset(bno_spi.cached_gyro, 0, sizeof(bno_spi.cached_gyro));
 
-	LOG_INF("BNO08x SPI init success: ODR=%.1f Hz", actual_odr);
+	LOG_INF("BNO08x SPI init success: ODR=%.1f Hz", (double)actual_odr);
 	ret = 0;
 
 unlock:
@@ -416,7 +416,7 @@ int bno08x_spi_update_odr(float accel_time, float gyro_time,
 		bno_spi.gyro_time = bno_spi.actual_time;
 		*accel_actual_time = bno_spi.actual_time;
 		*gyro_actual_time = bno_spi.actual_time;
-		LOG_INF("ODR updated to %.1f Hz", 1.0f / bno_spi.actual_time);
+		LOG_INF("ODR updated to %.1f Hz", (double)(1.0f / bno_spi.actual_time));
 	}
 	k_mutex_unlock(&bno_spi_mutex);
 	return ret;

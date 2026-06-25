@@ -412,7 +412,7 @@ int bno08x_update_odr(float accel_time, float gyro_time,
         bno.gyro_time = bno.actual_time;
         *accel_actual_time = bno.actual_time;
         *gyro_actual_time = bno.actual_time;
-        LOG_INF("ODR updated to %.1f Hz", 1.0f / bno.actual_time);
+        LOG_INF("ODR updated to %.1f Hz", (double)(1.0f / bno.actual_time));
     }
     k_mutex_unlock(&bno_mutex);
     return ret;

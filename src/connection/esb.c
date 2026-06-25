@@ -484,7 +484,6 @@ void event_handler(struct esb_evt const *event)
 		}
 		break;
 	case ESB_EVENT_RX_RECEIVED: {
-		uint32_t current_rx_ticks = sys_clock_tick_get_32();
 		int err = 0;
 		err = esb_read_rx_payload(&rx_payload);
 		if (err == -ENODATA) {
