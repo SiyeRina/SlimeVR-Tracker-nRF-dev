@@ -77,7 +77,7 @@ static sensor_range_stats_t range_stats = {
 #endif // CONFIG_SENSOR_RANGE_STATS
 
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(imu_spi), okay)
-#define SENSOR_IMU_SPI_EXISTS false
+#define SENSOR_IMU_SPI_EXISTS true
 #define SENSOR_IMU_SPI_NODE DT_NODELABEL(imu_spi)
 static struct spi_dt_spec sensor_imu_spi_dev = SPI_DT_SPEC_GET(SENSOR_IMU_SPI_NODE, SPI_OP, 0);
 #endif
