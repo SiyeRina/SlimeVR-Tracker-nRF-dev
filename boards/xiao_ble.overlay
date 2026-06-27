@@ -46,6 +46,7 @@
 		button0: button_0 {
 			gpios = <&gpio0 2 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "Push button switch 0";
+			status = "disabled";
 		};
 	};
 
@@ -65,7 +66,7 @@
 	};
 
 	zephyr,user {
-		int0-gpios = <&gpio0 3 0>;
+		int0-gpios = <&gpio0 2 0>;
 		led-gpios = <&gpio0 17 (GPIO_OPEN_DRAIN|GPIO_ACTIVE_LOW)>;
 		// clk-gpios = <&gpio0 28 GPIO_OPEN_DRAIN>; // Uncomment and set to correct pin if using an external clock (crystal oscillator)
 	};
