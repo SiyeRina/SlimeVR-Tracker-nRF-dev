@@ -117,19 +117,18 @@ static int shtp_recv(uint8_t *buf, uint8_t **payload, uint32_t *payload_len, uin
     if (err < 0)
         return -1;
 
-    /* BNO08x → host uses 4-byte SHTP header (same format as host→BNO08x):
+    /* BNO08x → host uses 3-byte SHTP header (no CRC, no continuation byte):
      *   [0]       = payload length LSB
      *   [1]       = len MSB (bits 5:0) | channel (bits 7:6)
      *   [2]       = sequence number
-     *   [3]       = continuation / reserved (0 for single-packet)
-     * Payload starts at buf[4]. */
+     * Payload starts at buf[3]. */
     uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
     if (pld_len == 0 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
         LOG_WRN("Invalid payload length: %u", pld_len);
         return -1;
     }
 
-    *payload = buf + 4;
+    *payload = buf + 3;
     *payload_len = pld_len;
     *channel = (buf[1] >> 6) & 0x03;
     return 0;
@@ -647,20 +646,20 @@ retry:
                 k_msleep(50);
                 continue;
             }
-            /* 4-byte SHTP header, payload at buf+4 */
+            /* 3-byte SHTP header, payload at buf+3 */
             uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
             if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
                 k_msleep(10);
                 continue;
             }
             uint8_t ch = (buf[1] >> 6) & 0x03;
-            uint8_t *pld = buf + 4;
+            uint8_t *pld = buf + 3;
 
             if (pld_len > 100) {
                 LOG_INF("BNO08x advertisement at 0x%02X (%u bytes) pld[0]=0x%02X",
                         addr, pld_len, pld[0]);
-                /* Dump first 32 bytes of payload for debugging */
-                LOG_HEXDUMP_INF(pld, (pld_len < 32) ? pld_len : 32, "ad pld[0..31]");
+                /* Dump first 48 bytes of payload for debugging */
+                LOG_HEXDUMP_INF(pld, (pld_len < 48) ? pld_len : 48, "ad pld[0..47]");
                 /* Parse product ID from boot advertisement.
                  * Format: pld[0]=0x00 (ADVERTISE), then tagged records:
                  *   [tag(1), len(1), data(len)] ...
@@ -686,11 +685,7 @@ retry:
                         pos += 2 + rlen;
                     }
                 } else {
-                    LOG_WRN("Ad pld[0]=0x%02X (expected 0x00), trying buf+3 offset", pld[0]);
-                    /* Also try 3-byte header offset */
-                    uint8_t *pld3 = buf + 3;
-                    LOG_INF("  buf+3 pld[0]=0x%02X pld[1..4]=[%02X %02X %02X %02X]",
-                            pld3[0], pld3[1], pld3[2], pld3[3], pld3[4]);
+                    LOG_WRN("Ad pld[0]=0x%02X (expected 0x00)", pld[0]);
                 }
                 chip_alive = true;
                 break;
@@ -748,14 +743,14 @@ retry:
             }
             n_reads++;
 
-            /* 4-byte SHTP header: payload at buf+4 */
+            /* 3-byte SHTP header: payload at buf+3 */
             uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
             if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
                 k_msleep(5);
                 continue;
             }
             uint8_t ch = (buf[1] >> 6) & 0x03;
-            uint8_t *pld = buf + 4;
+            uint8_t *pld = buf + 3;
 
             /* Print raw header bytes for offset verification */
             LOG_INF("RX raw[0..7]=[%02X %02X %02X %02X %02X %02X %02X %02X]",
