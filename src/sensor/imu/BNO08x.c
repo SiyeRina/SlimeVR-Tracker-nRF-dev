@@ -608,9 +608,12 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
 {
     static const uint8_t addrs[] = {BNO08X_I2C_ADDR_DEFAULT, BNO08X_I2C_ADDR_ALT};
     uint16_t saved_addr = i2c_dev->addr;
+    uint16_t orig_addr = saved_addr;
     const struct device *bus = i2c_dev->bus;
     struct i2c_dt_spec tmp_dev;
+    bool retried = false;
 
+retry:
     for (int ai = 0; ai < ARRAY_SIZE(addrs); ai++) {
         uint8_t addr = addrs[ai];
         if (saved_addr >= 8 && saved_addr <= 119 && saved_addr != addr)
@@ -717,9 +720,10 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
             memcpy(buf, hdr, 4);
             if (i2c_read_dt(&tmp_dev, buf + 4, pld_len + 1) < 0)
                 continue;
+            /* BNO08x command responses also omit CRC, consistent with
+             * output packets. The response-type check below is sufficient. */
             uint32_t check_len = 4 + pld_len;
-            if (shtp_crc8(buf, check_len) != buf[check_len])
-                continue;
+            (void)check_len;
 
             if (hdr[2] == 0 && pld_len >= 4 && buf[4] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
                 uint8_t pid_low = buf[5], pid_high = buf[6];
@@ -745,7 +749,16 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         return detected_imu;
     }
 
-    i2c_dev->addr = saved_addr;
+    /* If a retained address from a previous boot filtered out both BNO08x
+     * addresses, retry once with the filter cleared (matches the fallback
+     * pattern in sensor_scan_i2c). */
+    if (!retried && orig_addr >= 8 && orig_addr <= 119) {
+        retried = true;
+        saved_addr = 0;
+        goto retry;
+    }
+
+    i2c_dev->addr = orig_addr;
     return -1;
 }
 
