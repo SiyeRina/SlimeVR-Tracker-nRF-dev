@@ -726,7 +726,7 @@ retry:
             uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
             if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
                 if (n_resp_reads <= 3)
-                    LOG_DBG("prod-id resp skip: ch=%u pld_len=%u", buf[2], pld_len);
+                    LOG_INF("prod-id resp skip: ch=%u pld_len=%u", buf[2], pld_len);
                 k_msleep(5);
                 continue;
             }
@@ -741,7 +741,7 @@ retry:
                 break;
             }
             if (n_resp_reads <= 3)
-                LOG_DBG("prod-id resp ch=%u pld_len=%u pld[0]=0x%02X",
+                LOG_INF("prod-id resp ch=%u pld_len=%u pld[0]=0x%02X",
                         buf[2], pld_len, buf[4]);
         }
 
