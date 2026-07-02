@@ -117,18 +117,19 @@ static int shtp_recv(uint8_t *buf, uint8_t **payload, uint32_t *payload_len, uin
     if (err < 0)
         return -1;
 
-    /* BNO08x → host uses 3-byte SHTP header (no CRC, no continuation byte):
+    /* BNO08x → host uses 4-byte SHTP header (no CRC):
      *   [0]       = payload length LSB
      *   [1]       = len MSB (bits 5:0) | channel (bits 7:6)
      *   [2]       = sequence number
-     * Payload starts at buf[3]. */
+     *   [3]       = continuation byte (0x00 for single segment)
+     * Payload starts at buf[4]. */
     uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
     if (pld_len == 0 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
         LOG_WRN("Invalid payload length: %u", pld_len);
         return -1;
     }
 
-    *payload = buf + 3;
+    *payload = buf + 4;
     *payload_len = pld_len;
     *channel = (buf[1] >> 6) & 0x03;
     return 0;
