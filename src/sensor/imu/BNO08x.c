@@ -310,39 +310,23 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     uint8_t *payload;
     uint32_t payload_len;
 
-    /* Drain stale data: read full max packet so we don't leave
-     * partial SHTP frames in the FIFO.  A short read (e.g. 4 bytes)
-     * would consume only the header of a pending packet and leave
-     * the payload bytes in the FIFO, corrupting subsequent reads.
-     * Reuse pkt_buf to avoid doubling stack usage in this function. */
-    ssi_read(SENSOR_INTERFACE_DEV_IMU, pkt_buf, sizeof(pkt_buf));
-    k_msleep(50);
-
     /* Send SH-2 RESET (0x01) on the EXECUTABLE channel.
-     * The SH-2 spec uses a single-byte command; the chip responds
-     * with a command-response on the same channel. */
+     * The probe has already consumed all pending SHTP data; no drain
+     * is needed here (a blocking read on an empty FIFO would trigger
+     * BNO08x clock-stretching and stall the I2C bus indefinitely).
+     *
+     * After RESET the BNO08x reboots its SH-2 firmware (~150-300 ms)
+     * and then sends a boot advertisement TLV on channel 0. */
     uint8_t reset_cmd[] = {BNO08X_CMD_RESET};
     int err = shtp_send(BNO08X_SHTP_CH_EXECUTABLE, reset_cmd, sizeof(reset_cmd));
     if (err < 0) {
         LOG_ERR("RESET send failed: %d", err);
         goto unlock;
     }
-    LOG_INF("RESET sent, waiting for cmd response...");
+    LOG_INF("RESET sent, waiting for reboot...");
+    k_msleep(300);
 
-    /* Wait for RESET response on EXECUTABLE channel (up to 300 ms).
-     * The BNO08x acknowledges the RESET before rebooting its firmware. */
-    ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-                                BNO08X_SHTP_CH_EXECUTABLE, 300);
-    if (ret < 0) {
-        LOG_WRN("No RESET response (chip may already be rebooting)");
-    } else if (payload_len >= 2 && payload[1] != 0x00) {
-        LOG_WRN("RESET returned status 0x%02X", payload[1]);
-    }
-    k_msleep(100);
-
-    /* Wait for boot advertisement on channel 0 (up to 800 ms).
-     * After RESET the BNO08x reboots its SH-2 firmware and sends an
-     * advertisement TLV containing product-id and version info. */
+    /* Wait for boot advertisement on channel 0 (up to 800 ms). */
     ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
                                 BNO08X_SHTP_CH_COMMAND, 800);
     if (ret < 0) {
