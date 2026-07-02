@@ -313,9 +313,9 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     /* Drain stale data: read full max packet so we don't leave
      * partial SHTP frames in the FIFO.  A short read (e.g. 4 bytes)
      * would consume only the header of a pending packet and leave
-     * the payload bytes in the FIFO, corrupting subsequent reads. */
-    uint8_t dummy[BNO08X_SHTP_MAX_PACKET];
-    ssi_read(SENSOR_INTERFACE_DEV_IMU, dummy, sizeof(dummy));
+     * the payload bytes in the FIFO, corrupting subsequent reads.
+     * Reuse pkt_buf to avoid doubling stack usage in this function. */
+    ssi_read(SENSOR_INTERFACE_DEV_IMU, pkt_buf, sizeof(pkt_buf));
     k_msleep(50);
 
     /* Send SH-2 RESET (0x01) on the EXECUTABLE channel.
