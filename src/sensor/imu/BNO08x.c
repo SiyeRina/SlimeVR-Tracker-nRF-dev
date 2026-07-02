@@ -741,8 +741,10 @@ retry:
                 break;
             }
             if (n_resp_reads <= 3)
-                LOG_INF("prod-id resp ch=%u pld_len=%u pld[0]=0x%02X",
-                        buf[2], pld_len, buf[4]);
+                LOG_INF("prod-id resp ch=%u pld_len=%u pld=[%02X %02X %02X %02X %02X %02X %02X %02X]",
+                        buf[2], pld_len,
+                        buf[4], buf[5], buf[6], buf[7],
+                        buf[8], buf[9], buf[10], buf[11]);
         }
 
         if (detected_imu < 0) {
