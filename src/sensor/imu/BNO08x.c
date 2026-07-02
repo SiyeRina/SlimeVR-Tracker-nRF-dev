@@ -118,11 +118,9 @@ static int shtp_recv(uint8_t *buf, uint8_t **payload, uint32_t *payload_len, uin
     }
 
     uint32_t check_len = BNO08X_SHTP_HEADER_SIZE + pld_len;
-    uint8_t calc_crc = shtp_crc8(buf, check_len);
-    if (calc_crc != buf[check_len]) {
-        LOG_WRN("CRC mismatch: calc 0x%02X recv 0x%02X", calc_crc, buf[check_len]);
-        return -2;
-    }
+    /* BNO08x output SHTP packets do not include a CRC byte;
+     * the byte at position check_len is the start of the next packet. */
+    (void)check_len;
 
     *payload = buf + BNO08X_SHTP_HEADER_SIZE;
     *payload_len = pld_len;
@@ -635,7 +633,7 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         int64_t deadline = k_uptime_get() + 1500;
         bool got_advert = false;
         bool chip_alive = false;
-        int n_err = 0, n_ok = 0, n_crc = 0;
+        int n_err = 0, n_ok = 0;
         while (k_uptime_get() < deadline) {
             uint8_t pkt[BNO08X_SHTP_MAX_PACKET];
             /* Read entire packet in one I2C transaction to avoid dequeuing mid-packet */
@@ -686,7 +684,7 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         }
 
         if (!got_advert) {
-            LOG_INF("No response at 0x%02X (n_err=%d n_ok=%d n_crc=%d%s)", addr, n_err, n_ok, n_crc,
+            LOG_INF("No response at 0x%02X (n_err=%d n_ok=%d%s)", addr, n_err, n_ok,
                     chip_alive ? ", chip alive but no advertisement" : "");
             continue;
         }
