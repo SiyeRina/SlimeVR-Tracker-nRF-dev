@@ -635,10 +635,11 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         int64_t deadline = k_uptime_get() + 1500;
         bool got_advert = false;
         bool chip_alive = false;
-        int n_err = 0, n_ok = 0;
+        int n_err = 0, n_ok = 0, n_crc = 0;
         while (k_uptime_get() < deadline) {
-            uint8_t hdr[4];
-            int err = i2c_read_dt(&tmp_dev, hdr, 4);
+            uint8_t pkt[BNO08X_SHTP_MAX_PACKET];
+            /* Read entire packet in one I2C transaction to avoid dequeuing mid-packet */
+            int err = i2c_read_dt(&tmp_dev, pkt, BNO08X_SHTP_MAX_PACKET);
             if (err < 0) {
                 if (n_err == 0)
                     LOG_ERR("I2C read err=%d at 0x%02X", err, addr);
@@ -647,10 +648,10 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
                 continue;
             }
             n_ok++;
-            uint32_t pld_len = (uint32_t)hdr[0] | ((uint32_t)(hdr[1] & 0x3F) << 8);
+            uint32_t pld_len = (uint32_t)pkt[0] | ((uint32_t)(pkt[1] & 0x3F) << 8);
             if (n_ok == 1)
                 LOG_INF("I2C ok at 0x%02X hdr=[%02X %02X %02X %02X] pld_len=%u",
-                        addr, hdr[0], hdr[1], hdr[2], hdr[3], pld_len);
+                        addr, pkt[0], pkt[1], pkt[2], pkt[3], pld_len);
             if (pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
                 k_msleep(10);
                 continue;
@@ -659,17 +660,16 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
                 k_msleep(5);
                 continue;
             }
-            /* Read payload+CRC immediately to minimize race window */
-            uint8_t pkt[BNO08X_SHTP_MAX_PACKET];
-            memcpy(pkt, hdr, 4);
-            err = i2c_read_dt(&tmp_dev, pkt + 4, pld_len + 1);
-            if (err < 0) {
-                k_msleep(10);
+            uint32_t check_len = BNO08X_SHTP_HEADER_SIZE + pld_len;
+            uint8_t calc = shtp_crc8(pkt, check_len);
+            if (calc != pkt[check_len]) {
+                n_crc++;
+                if (n_crc == 1)
+                    LOG_ERR("CRC mismatch at 0x%02X: calc=0x%02X got=0x%02X (ch=%u len=%u fc=%02X)",
+                            addr, calc, pkt[check_len], pkt[2], pld_len, pkt[4]);
+                k_msleep(5);
                 continue;
             }
-            uint32_t check_len = BNO08X_SHTP_HEADER_SIZE + pld_len;
-            if (shtp_crc8(pkt, check_len) != pkt[check_len])
-                continue;
 
             if (!chip_alive) {
                 chip_alive = true;
@@ -691,7 +691,7 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         }
 
         if (!got_advert) {
-            LOG_INF("No response at 0x%02X (n_err=%d n_ok=%d%s)", addr, n_err, n_ok,
+            LOG_INF("No response at 0x%02X (n_err=%d n_ok=%d n_crc=%d%s)", addr, n_err, n_ok, n_crc,
                     chip_alive ? ", chip alive but no advertisement" : "");
             continue;
         }
