@@ -702,30 +702,24 @@ retry:
             continue;
         k_msleep(20);
 
-        /* Read response */
+        /* Read response: read full max packet in one I2C transaction
+         * to avoid race between header and payload reads across two STOPs
+         * (same pattern as shtp_recv). */
         deadline = k_uptime_get() + 200;
         int detected_imu = -1;
         while (k_uptime_get() < deadline) {
-            uint8_t hdr[4];
-            if (i2c_read_dt(&tmp_dev, hdr, 4) < 0) {
+            uint8_t buf[BNO08X_SHTP_MAX_PACKET];
+            int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
+            if (err < 0) {
                 k_msleep(5);
                 continue;
             }
-            uint32_t pld_len = (uint32_t)hdr[0] | ((uint32_t)(hdr[1] & 0x3F) << 8);
+            uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
             if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
                 k_msleep(5);
                 continue;
             }
-            uint8_t buf[BNO08X_SHTP_MAX_PACKET];
-            memcpy(buf, hdr, 4);
-            if (i2c_read_dt(&tmp_dev, buf + 4, pld_len + 1) < 0)
-                continue;
-            /* BNO08x command responses also omit CRC, consistent with
-             * output packets. The response-type check below is sufficient. */
-            uint32_t check_len = 4 + pld_len;
-            (void)check_len;
-
-            if (hdr[2] == 0 && pld_len >= 4 && buf[4] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
+            if (buf[2] == 0 && buf[4] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
                 uint8_t pid_low = buf[5], pid_high = buf[6];
                 uint16_t pid = ((uint16_t)pid_high << 8) | pid_low;
                 LOG_INF("Product ID 0x%04X at 0x%02X", pid, addr);
