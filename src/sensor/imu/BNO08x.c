@@ -234,18 +234,31 @@ static inline float q30_to_float(const uint8_t *p)
 
 static void decode_grv(const uint8_t *payload, float q[4])
 {
-    /* SH-2 Game Rotation Vector: report_id(1) + x(4) + y(4) + z(4) + w(4) */
-    q[1] = q30_to_float(payload + 1);   /* x = i */
-    q[2] = q30_to_float(payload + 5);   /* y = j */
-    q[3] = q30_to_float(payload + 9);   /* z = k */
-    q[0] = q30_to_float(payload + 13); /* w = real */
+    /* SH-2 Game Rotation Vector report layout:
+     *   [0]    = report_id (0x05)
+     *   [1]    = sequence number
+     *   [2-3]  = status (uint16)
+     *   [4-7]  = delay (uint32)
+     *   [8-11] = i (Q30)
+     *   [12-15]= j (Q30)
+     *   [16-19]= k (Q30)
+     *   [20-23]= w/real (Q30) */
+    q[1] = q30_to_float(payload + 8);   /* i */
+    q[2] = q30_to_float(payload + 12);  /* j */
+    q[3] = q30_to_float(payload + 16);  /* k */
+    q[0] = q30_to_float(payload + 20);  /* real */
 }
 
 static float decode_temperature(const uint8_t *payload)
 {
-    /* Temperature report: payload[1] = °C * 2?  Check SH-2 spec */
-    int16_t raw = (int16_t)(payload[1] | (payload[2] << 8));
-    return (float)raw * 0.5f; /* typical scaling */
+    /* SH-2 Temperature report (0x07):
+     *   [0]    = report_id
+     *   [1]    = sequence
+     *   [2]    = status
+     *   [3-4]  = delay
+     *   [5-6]  = temperature (int16, °C * 100?) */
+    int16_t raw = (int16_t)(payload[5] | (payload[6] << 8));
+    return (float)raw * 0.01f;
 }
 
 /* =========================================================================
@@ -444,27 +457,27 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
         if (err < 0)
             break;
 
-        if (channel != BNO08X_SHTP_CH_INPUT || payload_len < 5)
+        if (channel != BNO08X_SHTP_CH_INPUT)
             continue;
 
         uint8_t report_id = payload[0];
 
-        if (report_id == BNO08X_REPORT_TEMPERATURE && bno.temp_enabled && payload_len >= 3) {
+        if (report_id == BNO08X_REPORT_TEMPERATURE && bno.temp_enabled && payload_len >= 7) {
             bno.cached_temp = decode_temperature(payload);
             continue;
         }
 
-        if (report_id != BNO08X_REPORT_GAME_ROTATION_VECTOR)
+        if (report_id != BNO08X_REPORT_GAME_ROTATION_VECTOR || payload_len < 24)
             continue;
 
         float q[4];
         decode_grv(payload, q);
 
-        /* Use the sensor's delay field (payload[3]) for dt */
-        uint8_t delay_u8 = payload[3];
-        uint32_t delay_us = (uint32_t)delay_u8 * 100; /* delay in 100 µs units? SH-2 spec says delay is in 100 µs units */
-        /* But some docs say delay is in µs. We'll trust the spec: delay * 100 µs. */
-        /* If the chip sends 0, fallback to accumulated_delay_us. */
+        /* Delay is uint32 at payload[4..7], in microseconds */
+        uint32_t delay_us = (uint32_t)payload[4]
+                          | ((uint32_t)payload[5] << 8)
+                          | ((uint32_t)payload[6] << 16)
+                          | ((uint32_t)payload[7] << 24);
         if (delay_us == 0)
             delay_us = 2500; /* default 2.5ms */
 
