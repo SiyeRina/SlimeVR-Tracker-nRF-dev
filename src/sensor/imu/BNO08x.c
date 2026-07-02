@@ -310,21 +310,43 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     uint8_t *payload;
     uint32_t payload_len;
 
-    /* Drain any stale data */
-    uint8_t dummy[4];
+    /* Drain stale data: read full max packet so we don't leave
+     * partial SHTP frames in the FIFO.  A short read (e.g. 4 bytes)
+     * would consume only the header of a pending packet and leave
+     * the payload bytes in the FIFO, corrupting subsequent reads. */
+    uint8_t dummy[BNO08X_SHTP_MAX_PACKET];
     ssi_read(SENSOR_INTERFACE_DEV_IMU, dummy, sizeof(dummy));
     k_msleep(50);
 
-    /* Send SH-2 reset on executable channel */
-    uint8_t reset_cmd[] = {BNO08X_CMD_RESET, 0x00};
-    shtp_send(BNO08X_SHTP_CH_EXECUTABLE, reset_cmd, sizeof(reset_cmd));
-    k_msleep(200);
+    /* Send SH-2 RESET (0x01) on the EXECUTABLE channel.
+     * The SH-2 spec uses a single-byte command; the chip responds
+     * with a command-response on the same channel. */
+    uint8_t reset_cmd[] = {BNO08X_CMD_RESET};
+    int err = shtp_send(BNO08X_SHTP_CH_EXECUTABLE, reset_cmd, sizeof(reset_cmd));
+    if (err < 0) {
+        LOG_ERR("RESET send failed: %d", err);
+        goto unlock;
+    }
+    LOG_INF("RESET sent, waiting for cmd response...");
 
-    /* Wait for advertisement on channel 0 (up to 600 ms) */
+    /* Wait for RESET response on EXECUTABLE channel (up to 300 ms).
+     * The BNO08x acknowledges the RESET before rebooting its firmware. */
     ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-                                BNO08X_SHTP_CH_COMMAND, 600);
+                                BNO08X_SHTP_CH_EXECUTABLE, 300);
     if (ret < 0) {
-        LOG_ERR("No boot advertisement");
+        LOG_WRN("No RESET response (chip may already be rebooting)");
+    } else if (payload_len >= 2 && payload[1] != 0x00) {
+        LOG_WRN("RESET returned status 0x%02X", payload[1]);
+    }
+    k_msleep(100);
+
+    /* Wait for boot advertisement on channel 0 (up to 800 ms).
+     * After RESET the BNO08x reboots its SH-2 firmware and sends an
+     * advertisement TLV containing product-id and version info. */
+    ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
+                                BNO08X_SHTP_CH_COMMAND, 800);
+    if (ret < 0) {
+        LOG_ERR("No boot advertisement after RESET");
         goto unlock;
     }
 
@@ -686,23 +708,22 @@ retry:
             uint32_t pl = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
             if (pl < 4 || pl > BNO08X_SHTP_MAX_PAYLOAD) { k_msleep(10); continue; }
             uint8_t ch = (buf[1] >> 6) & 0x03;
-            uint8_t *pld = buf + 3;
+            uint8_t *pld = buf + 4; /* SHTP header is 4 bytes */
 
             if (pl > 100) {
                 LOG_INF("BNO08x advertisement at 0x%02X (%u bytes) pld[0]=0x%02X", addr, pl, pld[0]);
                 LOG_HEXDUMP_INF(pld, (pl < 48) ? pl : 48, "ad pld[0..47]");
-                if (pld[0] == 0x00) {
-                    uint32_t pos = 1;
-                    while (pos + 1 < pl) {
-                        uint8_t tag = pld[pos]; uint8_t rlen = pld[pos + 1];
-                        if (pos + 2 + rlen > pl) break;
-                        if (tag == 0xF8 && rlen >= 2) {
-                            uint16_t pid = ((uint16_t)pld[pos + 3] << 8) | pld[pos + 2];
-                            LOG_INF("Product ID 0x%04X from advertisement at 0x%02X", pid, addr);
-                            break;
-                        }
-                        pos += 2 + rlen;
+                /* Parse TLV entries in the advertisement payload */
+                uint32_t pos = 0;
+                while (pos + 1 < pl) {
+                    uint8_t tag = pld[pos]; uint8_t rlen = pld[pos + 1];
+                    if (pos + 2 + rlen > pl) break;
+                    if (tag == 0xF8 && rlen >= 2) {
+                        uint16_t pid = ((uint16_t)pld[pos + 3] << 8) | pld[pos + 2];
+                        LOG_INF("Product ID 0x%04X from advertisement at 0x%02X", pid, addr);
+                        break;
                     }
+                    pos += 2 + rlen;
                 }
                 found = true;
                 break;
