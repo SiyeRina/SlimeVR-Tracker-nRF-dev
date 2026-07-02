@@ -628,12 +628,14 @@ retry:
         LOG_INF("BNO08x probe at 0x%02X", addr);
         tmp_dev.bus = bus; tmp_dev.addr = addr;
 
-        /* ── Phase 1: Wait for boot advertisement ───────────────────
-         * The BNO08x sends a ~276-byte boot advertisement on channel 0
-         * after power-up.  We must wait for this before sending any
-         * commands — the chip ignores SH-2 requests while booting. */
-        bool saw_advertisement = false;
-        int64_t ad_deadline = k_uptime_get() + 800;
+        /* ── Phase 1: Wait for chip to come alive ────────────────────
+         * The BNO08x sends a ~276-byte boot advertisement (plus a few
+         * short status packets) on channel 0 after power-up.  We accept
+         * ANY valid SHTP packet as proof-of-life — the large ad only
+         * appears once per boot, but retries may see smaller packets
+         * or nothing at all (chip idle after boot). */
+        bool chip_alive = false;
+        int64_t ad_deadline = k_uptime_get() + 600;
         while (k_uptime_get() < ad_deadline) {
             uint8_t buf[BNO08X_SHTP_MAX_PACKET];
             int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
@@ -642,48 +644,33 @@ retry:
                 continue;
             }
             uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
-            if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
+            if (pld_len >= 4 && pld_len <= BNO08X_SHTP_MAX_PAYLOAD) {
+                uint8_t ch = (buf[1] >> 6) & 0x03;
+                if (pld_len > 100) {
+                    LOG_INF("BNO08x advertisement at 0x%02X (%u bytes)", addr, pld_len);
+                } else {
+                    LOG_INF("BNO08x alive at 0x%02X (ch=%u len=%u)", addr, ch, pld_len);
+                }
+                chip_alive = true;
+                break;
+            }
+            k_msleep(10);
+        }
+
+        /* If we saw any packet, drain the rest of the boot burst. */
+        if (chip_alive) {
+            int64_t drain_end = k_uptime_get() + 100;
+            while (k_uptime_get() < drain_end) {
+                uint8_t buf[BNO08X_SHTP_MAX_PACKET];
+                int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
+                if (err < 0) { k_msleep(10); break; }
                 k_msleep(10);
-                continue;
             }
-            uint8_t ch = (buf[1] >> 6) & 0x03;
-            LOG_INF("BNO08x boot packet: ch=%u len=%u", ch, pld_len);
-            if (ch == 0 && pld_len > 100) {
-                LOG_INF("BNO08x advertisement received (%u bytes)", pld_len);
-                saw_advertisement = true;
-                break;  /* Got the ad, chip has booted */
-            }
-            k_msleep(10);
         }
 
-        if (!saw_advertisement) {
-            LOG_INF("No boot advertisement at 0x%02X", addr);
-            continue;
-        }
-
-        /* ── Phase 2: Drain remaining boot packets ──────────────────
-         * The chip may send a few more short packets (status, reset
-         * complete notification) after the main advertisement.  Drain
-         * them so our product-id request response isn't mixed in. */
-        int64_t drain_deadline = k_uptime_get() + 100;
-        while (k_uptime_get() < drain_deadline) {
-            uint8_t buf[BNO08X_SHTP_MAX_PACKET];
-            int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
-            if (err < 0) {
-                k_msleep(20);
-                break;  /* FIFO empty → chip is idle */
-            }
-            uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
-            if (pld_len > 0 && pld_len <= BNO08X_SHTP_MAX_PAYLOAD) {
-                uint8_t *pld = buf + 3;
-                LOG_INF("BNO08x drain: ch=%u len=%u pld[0]=%02X",
-                        (buf[1] >> 6) & 0x03, pld_len, pld[0]);
-            }
-            k_msleep(10);
-        }
-
-        /* ── Phase 3: Send product ID request ───────────────────────
-         * Now the chip is idle and ready to accept commands. */
+        /* ── Phase 2: Send product ID request ───────────────────────
+         * Always attempt the write — if the chip is at this address
+         * but idle (e.g. on a retry), the write will still succeed. */
         uint8_t cmd[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
         uint8_t tx[BNO08X_SHTP_MAX_PACKET];
         uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_COMMAND, 0, cmd, sizeof(cmd));
@@ -694,7 +681,7 @@ retry:
             continue;
         }
 
-        /* ── Phase 4: Read product ID response ───────────────────── */
+        /* ── Phase 3: Read product ID response ───────────────────── */
         int64_t deadline = k_uptime_get() + 300;
         int detected_imu = -1;
         int n_reads = 0;
