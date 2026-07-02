@@ -92,7 +92,7 @@ static uint32_t shtp_build_packet(uint8_t *buf, uint8_t channel,
     memcpy(buf + BNO08X_SHTP_HEADER_SIZE, payload, payload_len);
     uint32_t total = BNO08X_SHTP_HEADER_SIZE + payload_len;
     buf[total] = shtp_crc8(buf, total);
-    return total + 1;git push
+    return total + 1;
 }
 
 static int shtp_send(uint8_t channel, const uint8_t *payload, uint32_t payload_len)
