@@ -657,7 +657,10 @@ retry:
             uint8_t *pld = buf + 4;
 
             if (pld_len > 100) {
-                LOG_INF("BNO08x advertisement at 0x%02X (%u bytes)", addr, pld_len);
+                LOG_INF("BNO08x advertisement at 0x%02X (%u bytes) pld[0]=0x%02X",
+                        addr, pld_len, pld[0]);
+                /* Dump first 32 bytes of payload for debugging */
+                LOG_HEXDUMP_INF(pld, (pld_len < 32) ? pld_len : 32, "ad pld[0..31]");
                 /* Parse product ID from boot advertisement.
                  * Format: pld[0]=0x00 (ADVERTISE), then tagged records:
                  *   [tag(1), len(1), data(len)] ...
@@ -668,6 +671,7 @@ retry:
                         uint8_t tag = pld[pos];
                         uint8_t rlen = pld[pos + 1];
                         if (pos + 2 + rlen > pld_len) break;
+                        LOG_INF("  ad tag=0x%02X rlen=%u at pos=%u", tag, rlen, pos);
                         if (tag == 0xF8 && rlen >= 2) {
                             uint8_t pid_low  = pld[pos + 2];
                             uint8_t pid_high = pld[pos + 3];
@@ -681,6 +685,12 @@ retry:
                         }
                         pos += 2 + rlen;
                     }
+                } else {
+                    LOG_WRN("Ad pld[0]=0x%02X (expected 0x00), trying buf+3 offset", pld[0]);
+                    /* Also try 3-byte header offset */
+                    uint8_t *pld3 = buf + 3;
+                    LOG_INF("  buf+3 pld[0]=0x%02X pld[1..4]=[%02X %02X %02X %02X]",
+                            pld3[0], pld3[1], pld3[2], pld3[3], pld3[4]);
                 }
                 chip_alive = true;
                 break;
