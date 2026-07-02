@@ -635,6 +635,7 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         int64_t deadline = k_uptime_get() + 1500;
         bool got_advert = false;
         int n_err = 0, n_ok = 0, n_short = 0;
+        bool bootloader_detected = false;
         while (k_uptime_get() < deadline) {
             uint8_t hdr[4];
             int err = i2c_read_dt(&tmp_dev, hdr, 4);
@@ -652,6 +653,17 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
                         addr, hdr[0], hdr[1], hdr[2], hdr[3], pld_len);
             if (pld_len == 0 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
                 n_short++;
+                /* Detect bootloader mode: n_err=0, all reads ok but all data invalid */
+                if (!bootloader_detected && n_err == 0 && n_ok >= 20 && n_short == n_ok) {
+                    bootloader_detected = true;
+                    LOG_WRN("Bootloader mode detected at 0x%02X, trying exit...", addr);
+                    /* Raw I2C write to exit bootloader and jump to application */
+                    uint8_t exit_cmd[] = {0x02, 0x00};
+                    i2c_write_dt(&tmp_dev, exit_cmd, sizeof(exit_cmd));
+                    k_msleep(500);
+                    /* Reset poll counters and continue */
+                    n_err = 0; n_ok = 0; n_short = 0;
+                }
                 k_msleep(10);
                 continue;
             }
