@@ -671,6 +671,31 @@ retry:
             }
         }
 
+        if (!found) {
+            /* Passive listen timed out — chip may be idle (retry
+             * scenario).  Send a product ID request to wake the chip.
+             * We do NOT send RESET here; bno08x_init handles that. */
+            uint8_t cmd[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
+            uint8_t tx[BNO08X_SHTP_MAX_PACKET];
+            uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_COMMAND, 0, cmd, sizeof(cmd));
+            if (i2c_write_dt(&tmp_dev, tx, txlen) == 0) {
+                int64_t wake_dl = k_uptime_get() + 400;
+                while (k_uptime_get() < wake_dl) {
+                    uint8_t buf[BNO08X_SHTP_MAX_PACKET];
+                    if (i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET) < 0) {
+                        k_msleep(20); continue;
+                    }
+                    uint32_t pl = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
+                    if (pl >= 4 && pl <= BNO08X_SHTP_MAX_PAYLOAD) {
+                        LOG_INF("BNO08x woken at 0x%02X (len=%u)", addr, pl);
+                        found = true;
+                        break;
+                    }
+                    k_msleep(10);
+                }
+            }
+        }
+
         if (found) {
             i2c_dev->addr = addr; *reg = 0x00;
             if (interface_register) sensor_interface_register_sensor_imu_i2c(i2c_dev);
