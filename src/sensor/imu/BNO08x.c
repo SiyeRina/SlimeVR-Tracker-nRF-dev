@@ -105,23 +105,17 @@ static int shtp_send(uint8_t channel, const uint8_t *payload, uint32_t payload_l
 
 static int shtp_recv(uint8_t *buf, uint8_t **payload, uint32_t *payload_len, uint8_t *channel)
 {
-    int err = ssi_read(SENSOR_INTERFACE_DEV_IMU, buf, BNO08X_SHTP_HEADER_SIZE);
+    /* Read the full max packet in one I2C transaction to avoid
+     * race between header and payload reads across two STOPs. */
+    int err = ssi_read(SENSOR_INTERFACE_DEV_IMU, buf, BNO08X_SHTP_MAX_PACKET);
     if (err < 0)
         return -1;
 
     uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
-    if (pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
-        LOG_WRN("Payload too large: %u", pld_len);
+    if (pld_len == 0 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
+        LOG_WRN("Invalid payload length: %u", pld_len);
         return -1;
     }
-
-    uint32_t remaining = pld_len + BNO08X_SHTP_CRC_SIZE;
-    if (remaining == 0)
-        return -1;
-
-    err = ssi_read(SENSOR_INTERFACE_DEV_IMU, buf + BNO08X_SHTP_HEADER_SIZE, remaining);
-    if (err < 0)
-        return -1;
 
     uint32_t check_len = BNO08X_SHTP_HEADER_SIZE + pld_len;
     uint8_t calc_crc = shtp_crc8(buf, check_len);
@@ -629,6 +623,13 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
 
         /* Wait for chip to boot */
         k_msleep(350);
+
+        /* Send SH-2 reset command to ensure clean state (same as SPI probe) */
+        uint8_t reset_cmd[] = {BNO08X_CMD_RESET, 0x00};
+        uint8_t reset_pkt[BNO08X_SHTP_MAX_PACKET];
+        uint32_t reset_len = shtp_build_packet(reset_pkt, BNO08X_SHTP_CH_COMMAND, 0, reset_cmd, sizeof(reset_cmd));
+        i2c_write_dt(&tmp_dev, reset_pkt, reset_len);
+        k_msleep(200);
 
         /* Poll for advertisement or GRV */
         int64_t deadline = k_uptime_get() + 1500;
