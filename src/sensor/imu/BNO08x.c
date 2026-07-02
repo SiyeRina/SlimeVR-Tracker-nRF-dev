@@ -622,116 +622,59 @@ retry:
         LOG_INF("BNO08x probe at 0x%02X", addr);
         tmp_dev.bus = bus; tmp_dev.addr = addr;
 
-        /* Wait for chip to boot */
-        k_msleep(350);
-
-        /* Send SH-2 reset on executable channel */
-        uint8_t reset_cmd[] = {BNO08X_CMD_RESET, 0x00};
-        uint8_t reset_pkt[BNO08X_SHTP_MAX_PACKET];
-        uint32_t reset_len = shtp_build_packet(reset_pkt, BNO08X_SHTP_CH_EXECUTABLE, 0, reset_cmd, sizeof(reset_cmd));
-        i2c_write_dt(&tmp_dev, reset_pkt, reset_len);
-        k_msleep(200);
-
-        /* Poll for advertisement or GRV */
-        int64_t deadline = k_uptime_get() + 1500;
-        bool got_advert = false;
-        bool chip_alive = false;
-        int n_err = 0, n_ok = 0;
-        while (k_uptime_get() < deadline) {
-            uint8_t pkt[BNO08X_SHTP_MAX_PACKET];
-            /* Read entire packet in one I2C transaction to avoid dequeuing mid-packet */
-            int err = i2c_read_dt(&tmp_dev, pkt, BNO08X_SHTP_MAX_PACKET);
-            if (err < 0) {
-                if (n_err == 0)
-                    LOG_ERR("I2C read err=%d at 0x%02X", err, addr);
-                n_err++;
-                k_msleep(20);
-                continue;
-            }
-            n_ok++;
-            uint32_t pld_len = (uint32_t)pkt[0] | ((uint32_t)(pkt[1] & 0x3F) << 8);
-            if (n_ok == 1)
-                LOG_INF("I2C ok at 0x%02X hdr=[%02X %02X %02X %02X] pld_len=%u",
-                        addr, pkt[0], pkt[1], pkt[2], pkt[3], pld_len);
-            if (pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
-                k_msleep(10);
-                continue;
-            }
-            if (pld_len == 0) {
-                k_msleep(5);
-                continue;
-            }
-            uint32_t check_len = BNO08X_SHTP_HEADER_SIZE + pld_len;
-            /* BNO08x output packets do not include a CRC byte, so skip CRC
-             * verification in the probe. The advertisement condition below
-             * (channel 0 + payload[0]==0x00) is sufficient for detection. */
-            (void)check_len;
-
-            if (!chip_alive) {
-                chip_alive = true;
-                LOG_INF("BNO08x application running at 0x%02X (ch %u, len %u)",
-                        addr, pkt[2], pld_len);
-                int64_t extend = k_uptime_get() + 3000;
-                if (extend > deadline) deadline = extend;
-            }
-
-            if (pkt[2] == 0 && pld_len >= 1 && pkt[4] == 0x00) {
-                got_advert = true;
-                break;
-            }
-            if (pkt[2] == 3 && pld_len >= 5 && pkt[4] == BNO08X_REPORT_GAME_ROTATION_VECTOR) {
-                got_advert = true;
-                break;
-            }
-            k_msleep(5);
-        }
-
-        if (!got_advert && chip_alive) {
-            /* Chip is alive and outputting data even without a formal
-             * advertisement; proceed with product ID request anyway. */
-            LOG_INF("BNO08x alive at 0x%02X (proceeding without advertisement)", addr);
-            got_advert = true;
-        }
-        if (!got_advert) {
-            LOG_INF("No response at 0x%02X (n_err=%d n_ok=%d)", addr, n_err, n_ok);
-            continue;
-        }
-
-        LOG_INF("Advertisement received at 0x%02X", addr);
+        /* Wait for chip to boot, then send product ID request directly
+         * (no reset — chip is already running if it ACKs I2C reads). */
+        k_msleep(300);
 
         /* Send product ID request */
         uint8_t cmd[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
         uint8_t tx[BNO08X_SHTP_MAX_PACKET];
         uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_COMMAND, 0, cmd, sizeof(cmd));
+        LOG_INF("TX prod-id req: len=%u pkt=[%02X %02X %02X %02X %02X %02X %02X]",
+                txlen, tx[0], tx[1], tx[2], tx[3], tx[4], tx[5], tx[6]);
         if (i2c_write_dt(&tmp_dev, tx, txlen) < 0) {
             LOG_ERR("Product ID request write failed at 0x%02X", addr);
             continue;
         }
-        k_msleep(20);
+        k_msleep(50);
 
-        /* Read response: read full max packet in one I2C transaction
-         * to avoid race between header and payload reads across two STOPs
-         * (same pattern as shtp_recv). */
-        deadline = k_uptime_get() + 200;
+        /* Read response with longer timeout */
+        int64_t deadline = k_uptime_get() + 500;
         int detected_imu = -1;
-        int n_resp_reads = 0;
+        int n_reads = 0;
         while (k_uptime_get() < deadline) {
             uint8_t buf[BNO08X_SHTP_MAX_PACKET];
             int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
             if (err < 0) {
-                k_msleep(5);
+                if (n_reads == 0) { k_msleep(50); }
+                else { k_msleep(10); }
                 continue;
             }
-            n_resp_reads++;
+            n_reads++;
+            if (n_reads == 1) {
+                LOG_INF("RX raw[0..7]=[%02X %02X %02X %02X %02X %02X %02X %02X]",
+                        buf[0], buf[1], buf[2], buf[3],
+                        buf[4], buf[5], buf[6], buf[7]);
+            }
             uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
             if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
-                if (n_resp_reads <= 3)
-                    LOG_INF("prod-id resp skip: ch=%u pld_len=%u", buf[2], pld_len);
                 k_msleep(5);
                 continue;
             }
-            if (buf[2] == 0 && buf[4] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
-                uint8_t pid_low = buf[5], pid_high = buf[6];
+            /* Check at both possible header offsets (4-byte and 3-byte) */
+            uint8_t ch4 = buf[2];                           /* 4-byte hdr: ch at [2] */
+            uint8_t pld0_4 = buf[4];                        /* 4-byte hdr: pld[0] */
+            uint8_t ch3 = (buf[1] >> 6) & 0x03;             /* 3-byte hdr: ch in [1] */
+            uint8_t pld0_3 = buf[3];                        /* 3-byte hdr: pld[0] */
+
+            if (pld0_4 == BNO08X_CMD_PRODUCT_ID_RESPONSE || pld0_3 == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
+                /* Determine which header format matched */
+                uint8_t pid_low, pid_high;
+                if (pld0_4 == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
+                    pid_low = buf[5]; pid_high = buf[6];
+                } else {
+                    pid_low = buf[4]; pid_high = buf[5];
+                }
                 uint16_t pid = ((uint16_t)pid_high << 8) | pid_low;
                 LOG_INF("Product ID 0x%04X at 0x%02X", pid, addr);
                 if (pid == BNO08X_PID_BNO085)
@@ -740,15 +683,11 @@ retry:
                     detected_imu = IMU_BNO086;
                 break;
             }
-            if (n_resp_reads <= 3)
-                LOG_INF("prod-id resp ch=%u pld_len=%u pld=[%02X %02X %02X %02X %02X %02X %02X %02X]",
-                        buf[2], pld_len,
-                        buf[4], buf[5], buf[6], buf[7],
-                        buf[8], buf[9], buf[10], buf[11]);
+            k_msleep(5);
         }
 
         if (detected_imu < 0) {
-            LOG_INF("Product ID not detected at 0x%02X (n_reads=%d)", addr, n_resp_reads);
+            LOG_INF("Product ID not detected at 0x%02X (n_reads=%d)", addr, n_reads);
             continue;
         }
 
