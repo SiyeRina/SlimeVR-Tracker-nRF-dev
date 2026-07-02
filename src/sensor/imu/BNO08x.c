@@ -635,10 +635,10 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         int64_t deadline = k_uptime_get() + 1500;
         bool got_advert = false;
         int n_err = 0, n_ok = 0, n_short = 0;
-        bool bootloader_detected = false;
         while (k_uptime_get() < deadline) {
-            uint8_t hdr[4];
-            int err = i2c_read_dt(&tmp_dev, hdr, 4);
+            uint8_t buf[BNO08X_SHTP_MAX_PACKET];
+            /* Single-shot read to avoid two-phase race with streaming packets */
+            int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
             if (err < 0) {
                 if (n_err == 0)
                     LOG_ERR("I2C read err=%d at 0x%02X", err, addr);
@@ -647,45 +647,28 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
                 continue;
             }
             n_ok++;
-            uint32_t pld_len = (uint32_t)hdr[0] | ((uint32_t)(hdr[1] & 0x3F) << 8);
+            uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
             if (n_ok == 1)
                 LOG_INF("I2C ok at 0x%02X hdr=[%02X %02X %02X %02X] pld_len=%u",
-                        addr, hdr[0], hdr[1], hdr[2], hdr[3], pld_len);
+                        addr, buf[0], buf[1], buf[2], buf[3], pld_len);
             if (pld_len == 0 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
                 n_short++;
-                /* Detect bootloader mode: n_err=0, all reads ok but all data invalid */
-                if (!bootloader_detected && n_err == 0 && n_ok >= 20 && n_short == n_ok) {
-                    bootloader_detected = true;
-                    LOG_WRN("Bootloader mode detected at 0x%02X, trying exit...", addr);
-                    /* Raw I2C write to exit bootloader and jump to application */
-                    uint8_t exit_cmd[] = {0x02, 0x00};
-                    i2c_write_dt(&tmp_dev, exit_cmd, sizeof(exit_cmd));
-                    k_msleep(500);
-                    /* Reset poll counters and continue */
-                    n_err = 0; n_ok = 0; n_short = 0;
-                }
                 k_msleep(10);
                 continue;
             }
-            uint8_t buf[BNO08X_SHTP_MAX_PACKET];
-            memcpy(buf, hdr, 4);
-            err = i2c_read_dt(&tmp_dev, buf + 4, pld_len + 1);
-            if (err < 0) {
-                k_msleep(10);
-                continue;
-            }
-            uint32_t check_len = 4 + pld_len;
+            uint32_t check_len = BNO08X_SHTP_HEADER_SIZE + pld_len;
             if (shtp_crc8(buf, check_len) != buf[check_len])
                 continue;
 
-            if (hdr[2] == 0 && pld_len >= 1 && buf[4] == 0x00) {
+            if (buf[2] == 0 && pld_len >= 1 && buf[4] == 0x00) {
                 got_advert = true;
                 break;
             }
-            if (hdr[2] == 3 && pld_len >= 5 && buf[4] == BNO08X_REPORT_GAME_ROTATION_VECTOR) {
+            if (buf[2] == 3 && pld_len >= 5 && buf[4] == BNO08X_REPORT_GAME_ROTATION_VECTOR) {
                 got_advert = true;
                 break;
             }
+            k_msleep(5);
         }
 
         if (!got_advert) {
