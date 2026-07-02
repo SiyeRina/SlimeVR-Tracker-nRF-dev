@@ -37,7 +37,7 @@
  *  SHTP Transport Layer Constants
  * ========================================================================= */
 #define BNO08X_SHTP_HEADER_SIZE    4
-#define BNO08X_SHTP_MAX_PAYLOAD    256
+#define BNO08X_SHTP_MAX_PAYLOAD    512   /* must accommodate boot advertisement (~276+ bytes) */
 #define BNO08X_SHTP_CRC_SIZE       1
 #define BNO08X_SHTP_MAX_PACKET     (BNO08X_SHTP_HEADER_SIZE + BNO08X_SHTP_MAX_PAYLOAD + BNO08X_SHTP_CRC_SIZE)
 
