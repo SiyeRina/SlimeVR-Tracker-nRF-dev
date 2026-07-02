@@ -290,9 +290,9 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     ssi_read(SENSOR_INTERFACE_DEV_IMU, dummy, sizeof(dummy));
     k_msleep(50);
 
-    /* Send SH-2 reset command */
+    /* Send SH-2 reset on executable channel */
     uint8_t reset_cmd[] = {BNO08X_CMD_RESET, 0x00};
-    shtp_send(BNO08X_SHTP_CH_COMMAND, reset_cmd, sizeof(reset_cmd));
+    shtp_send(BNO08X_SHTP_CH_EXECUTABLE, reset_cmd, sizeof(reset_cmd));
     k_msleep(200);
 
     /* Wait for advertisement on channel 0 (up to 600 ms) */
@@ -625,10 +625,10 @@ retry:
         /* Wait for chip to boot */
         k_msleep(350);
 
-        /* Send SH-2 reset command to ensure clean state (same as SPI probe) */
+        /* Send SH-2 reset on executable channel */
         uint8_t reset_cmd[] = {BNO08X_CMD_RESET, 0x00};
         uint8_t reset_pkt[BNO08X_SHTP_MAX_PACKET];
-        uint32_t reset_len = shtp_build_packet(reset_pkt, BNO08X_SHTP_CH_COMMAND, 0, reset_cmd, sizeof(reset_cmd));
+        uint32_t reset_len = shtp_build_packet(reset_pkt, BNO08X_SHTP_CH_EXECUTABLE, 0, reset_cmd, sizeof(reset_cmd));
         i2c_write_dt(&tmp_dev, reset_pkt, reset_len);
         k_msleep(200);
 
