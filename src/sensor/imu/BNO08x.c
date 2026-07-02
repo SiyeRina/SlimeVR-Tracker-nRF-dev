@@ -703,8 +703,10 @@ retry:
         uint8_t cmd[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
         uint8_t tx[BNO08X_SHTP_MAX_PACKET];
         uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_COMMAND, 0, cmd, sizeof(cmd));
-        if (i2c_write_dt(&tmp_dev, tx, txlen) < 0)
+        if (i2c_write_dt(&tmp_dev, tx, txlen) < 0) {
+            LOG_ERR("Product ID request write failed at 0x%02X", addr);
             continue;
+        }
         k_msleep(20);
 
         /* Read response: read full max packet in one I2C transaction
@@ -712,6 +714,7 @@ retry:
          * (same pattern as shtp_recv). */
         deadline = k_uptime_get() + 200;
         int detected_imu = -1;
+        int n_resp_reads = 0;
         while (k_uptime_get() < deadline) {
             uint8_t buf[BNO08X_SHTP_MAX_PACKET];
             int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
@@ -719,8 +722,11 @@ retry:
                 k_msleep(5);
                 continue;
             }
+            n_resp_reads++;
             uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
             if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
+                if (n_resp_reads <= 3)
+                    LOG_DBG("prod-id resp skip: ch=%u pld_len=%u", buf[2], pld_len);
                 k_msleep(5);
                 continue;
             }
@@ -734,10 +740,15 @@ retry:
                     detected_imu = IMU_BNO086;
                 break;
             }
+            if (n_resp_reads <= 3)
+                LOG_DBG("prod-id resp ch=%u pld_len=%u pld[0]=0x%02X",
+                        buf[2], pld_len, buf[4]);
         }
 
-        if (detected_imu < 0)
+        if (detected_imu < 0) {
+            LOG_INF("Product ID not detected at 0x%02X (n_reads=%d)", addr, n_resp_reads);
             continue;
+        }
 
         /* Found */
         i2c_dev->addr = addr;
