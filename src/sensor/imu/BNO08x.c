@@ -637,9 +637,8 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         bool chip_alive = false;
         int n_err = 0, n_ok = 0;
         while (k_uptime_get() < deadline) {
-            uint8_t buf[BNO08X_SHTP_MAX_PACKET];
-            /* Single-shot read to avoid two-phase race with streaming packets */
-            int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
+            uint8_t hdr[4];
+            int err = i2c_read_dt(&tmp_dev, hdr, 4);
             if (err < 0) {
                 if (n_err == 0)
                     LOG_ERR("I2C read err=%d at 0x%02X", err, addr);
@@ -648,39 +647,43 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
                 continue;
             }
             n_ok++;
-            uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
+            uint32_t pld_len = (uint32_t)hdr[0] | ((uint32_t)(hdr[1] & 0x3F) << 8);
             if (n_ok == 1)
                 LOG_INF("I2C ok at 0x%02X hdr=[%02X %02X %02X %02X] pld_len=%u",
-                        addr, buf[0], buf[1], buf[2], buf[3], pld_len);
-            /* Allow pld_len=0 (heartbeat/empty SHTP packets), only reject overflow */
+                        addr, hdr[0], hdr[1], hdr[2], hdr[3], pld_len);
             if (pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
                 k_msleep(10);
                 continue;
             }
-            /* Skip empty packets silently (BNO08x heartbeats during boot) */
             if (pld_len == 0) {
                 k_msleep(5);
                 continue;
             }
+            /* Read payload+CRC immediately to minimize race window */
+            uint8_t pkt[BNO08X_SHTP_MAX_PACKET];
+            memcpy(pkt, hdr, 4);
+            err = i2c_read_dt(&tmp_dev, pkt + 4, pld_len + 1);
+            if (err < 0) {
+                k_msleep(10);
+                continue;
+            }
             uint32_t check_len = BNO08X_SHTP_HEADER_SIZE + pld_len;
-            if (shtp_crc8(buf, check_len) != buf[check_len])
+            if (shtp_crc8(pkt, check_len) != pkt[check_len])
                 continue;
 
-            /* Any valid SHTP packet proves the chip is running application firmware */
             if (!chip_alive) {
                 chip_alive = true;
-                LOG_INF("BNO08x application running at 0x%02X (channel %u, len %u)",
-                        addr, buf[2], pld_len);
-                /* Extend deadline to wait for the boot advertisement */
-                int64_t extend = k_uptime_get() + 2000;
+                LOG_INF("BNO08x application running at 0x%02X (ch %u, len %u)",
+                        addr, pkt[2], pld_len);
+                int64_t extend = k_uptime_get() + 3000;
                 if (extend > deadline) deadline = extend;
             }
 
-            if (buf[2] == 0 && pld_len >= 1 && buf[4] == 0x00) {
+            if (pkt[2] == 0 && pld_len >= 1 && pkt[4] == 0x00) {
                 got_advert = true;
                 break;
             }
-            if (buf[2] == 3 && pld_len >= 5 && buf[4] == BNO08X_REPORT_GAME_ROTATION_VECTOR) {
+            if (pkt[2] == 3 && pld_len >= 5 && pkt[4] == BNO08X_REPORT_GAME_ROTATION_VECTOR) {
                 got_advert = true;
                 break;
             }
