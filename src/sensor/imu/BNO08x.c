@@ -661,15 +661,10 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
                 continue;
             }
             uint32_t check_len = BNO08X_SHTP_HEADER_SIZE + pld_len;
-            uint8_t calc = shtp_crc8(pkt, check_len);
-            if (calc != pkt[check_len]) {
-                n_crc++;
-                if (n_crc == 1)
-                    LOG_ERR("CRC mismatch at 0x%02X: calc=0x%02X got=0x%02X (ch=%u len=%u fc=%02X)",
-                            addr, calc, pkt[check_len], pkt[2], pld_len, pkt[4]);
-                k_msleep(5);
-                continue;
-            }
+            /* BNO08x output packets do not include a CRC byte, so skip CRC
+             * verification in the probe. The advertisement condition below
+             * (channel 0 + payload[0]==0x00) is sufficient for detection. */
+            (void)check_len;
 
             if (!chip_alive) {
                 chip_alive = true;
