@@ -628,102 +628,87 @@ retry:
         LOG_INF("BNO08x probe at 0x%02X", addr);
         tmp_dev.bus = bus; tmp_dev.addr = addr;
 
-        /* Send SH-2 RESET to force the chip to reboot and send a fresh
-         * boot advertisement.  This is essential for retry scenarios
-         * where the chip has already booted and gone idle. */
-        {
-            uint8_t rst[] = {BNO08X_CMD_RESET, 0x00};
-            uint8_t tx[BNO08X_SHTP_MAX_PACKET];
-            uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_EXECUTABLE, 0, rst, sizeof(rst));
-            if (i2c_write_dt(&tmp_dev, tx, txlen) < 0) {
-                LOG_INF("Chip not present at 0x%02X (reset write failed)", addr);
-                continue;
-            }
-            k_msleep(150); /* wait for chip to reboot after reset */
-        }
-
-        /* ── Phase 1: Wait for chip to come alive + parse boot ad ───
-         * The BNO08x sends a ~276-byte boot advertisement on channel 0
-         * after power-up.  The product ID is embedded as a 0xF8-tagged
-         * record within that advertisement — we parse it directly so we
-         * don't need a separate product ID request.
-         *
-         * We also accept ANY valid SHTP packet as proof-of-life for
-         * retries where the large ad has already been sent. */
+        /* ── Phase 1a: Try catching advertisement without reset ─────
+         * On first boot the chip sends its ~276-byte ad automatically.
+         * We try a short wait first so we don't interfere with the
+         * natural boot sequence. */
         bool chip_alive = false;
         int detected_imu_ad = -1;
         bool saw_advertisement = false;
-        int64_t ad_deadline = k_uptime_get() + 600;
-        while (k_uptime_get() < ad_deadline) {
-            uint8_t buf[BNO08X_SHTP_MAX_PACKET];
-            int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
-            if (err < 0) {
-                k_msleep(50);
-                continue;
-            }
-            /* 3-byte SHTP header, payload at buf+3 */
-            uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
-            if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
-                k_msleep(10);
-                continue;
-            }
-            uint8_t ch = (buf[1] >> 6) & 0x03;
-            uint8_t *pld = buf + 3;
+        bool tried_reset = false;
 
-            if (pld_len > 100) {
-                saw_advertisement = true;
-                LOG_INF("BNO08x advertisement at 0x%02X (%u bytes) pld[0]=0x%02X",
-                        addr, pld_len, pld[0]);
-                /* Dump first 48 bytes of payload for debugging */
-                LOG_HEXDUMP_INF(pld, (pld_len < 48) ? pld_len : 48, "ad pld[0..47]");
-                /* Parse product ID from boot advertisement.
-                 * Format: pld[0]=0x00 (ADVERTISE), then tagged records:
-                 *   [tag(1), len(1), data(len)] ...
-                 * Product ID record: tag=0xF8, len=2, data=[pid_lsb, pid_msb] */
-                if (pld[0] == 0x00) {
-                    uint32_t pos = 1;
-                    while (pos + 1 < pld_len) {
-                        uint8_t tag = pld[pos];
-                        uint8_t rlen = pld[pos + 1];
-                        if (pos + 2 + rlen > pld_len) break;
-                        LOG_INF("  ad tag=0x%02X rlen=%u at pos=%u", tag, rlen, pos);
-                        if (tag == 0xF8 && rlen >= 2) {
-                            uint8_t pid_low  = pld[pos + 2];
-                            uint8_t pid_high = pld[pos + 3];
-                            uint16_t pid = ((uint16_t)pid_high << 8) | pid_low;
-                            LOG_INF("Product ID 0x%04X from advertisement at 0x%02X", pid, addr);
-                            if (pid == BNO08X_PID_BNO085)
-                                detected_imu_ad = IMU_BNO085;
-                            else if (pid == BNO08X_PID_BNO086)
-                                detected_imu_ad = IMU_BNO086;
-                            break;
-                        }
-                        pos += 2 + rlen;
-                    }
-                } else {
-                    LOG_WRN("Ad pld[0]=0x%02X (expected 0x00)", pld[0]);
-                }
-                chip_alive = true;
-                break;
-            } else {
-                LOG_INF("BNO08x alive at 0x%02X (ch=%u len=%u pld[0]=0x%02X)",
-                        addr, ch, pld_len, pld[0]);
-                chip_alive = true;
-                break;
-            }
-            k_msleep(10);
-        }
+        /* Helper macro: scan for advertisement in buf */
+#define PHASE1_SCAN() do { \
+            int64_t _dl = k_uptime_get() + 600; \
+            while (k_uptime_get() < _dl) { \
+                uint8_t _buf[BNO08X_SHTP_MAX_PACKET]; \
+                int _err = i2c_read_dt(&tmp_dev, _buf, BNO08X_SHTP_MAX_PACKET); \
+                if (_err < 0) { k_msleep(50); continue; } \
+                uint32_t _pl = (uint32_t)_buf[0] | ((uint32_t)(_buf[1] & 0x3F) << 8); \
+                if (_pl < 4 || _pl > BNO08X_SHTP_MAX_PAYLOAD) { k_msleep(10); continue; } \
+                uint8_t _ch = (_buf[1] >> 6) & 0x03; \
+                uint8_t *_pld = _buf + 3; \
+                if (_pl > 100) { \
+                    saw_advertisement = true; \
+                    LOG_INF("BNO08x advertisement at 0x%02X (%u bytes) pld[0]=0x%02X", addr, _pl, _pld[0]); \
+                    LOG_HEXDUMP_INF(_pld, (_pl < 48) ? _pl : 48, "ad pld[0..47]"); \
+                    if (_pld[0] == 0x00) { \
+                        uint32_t _pos = 1; \
+                        while (_pos + 1 < _pl) { \
+                            uint8_t _tag = _pld[_pos]; \
+                            uint8_t _rlen = _pld[_pos + 1]; \
+                            if (_pos + 2 + _rlen > _pl) break; \
+                            LOG_INF("  ad tag=0x%02X rlen=%u at pos=%u", _tag, _rlen, _pos); \
+                            if (_tag == 0xF8 && _rlen >= 2) { \
+                                uint16_t _pid = ((uint16_t)_pld[_pos + 3] << 8) | _pld[_pos + 2]; \
+                                LOG_INF("Product ID 0x%04X from advertisement at 0x%02X", _pid, addr); \
+                                if (_pid == BNO08X_PID_BNO085) detected_imu_ad = IMU_BNO085; \
+                                else if (_pid == BNO08X_PID_BNO086) detected_imu_ad = IMU_BNO086; \
+                                break; \
+                            } \
+                            _pos += 2 + _rlen; \
+                        } \
+                    } else { LOG_WRN("Ad pld[0]=0x%02X (expected 0x00)", _pld[0]); } \
+                    chip_alive = true; break; \
+                } else { \
+                    LOG_INF("BNO08x alive at 0x%02X (ch=%u len=%u pld[0]=0x%02X)", addr, _ch, _pl, _pld[0]); \
+                    chip_alive = true; break; \
+                } \
+                k_msleep(10); \
+            } \
+        } while(0)
 
-        /* Drain remaining boot burst packets. */
+        PHASE1_SCAN();
+
+        /* Drain boot burst. */
         if (chip_alive) {
             int64_t drain_end = k_uptime_get() + 100;
             while (k_uptime_get() < drain_end) {
-                uint8_t buf[BNO08X_SHTP_MAX_PACKET];
-                int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
-                if (err < 0) { k_msleep(10); break; }
+                uint8_t dbuf[BNO08X_SHTP_MAX_PACKET];
+                if (i2c_read_dt(&tmp_dev, dbuf, BNO08X_SHTP_MAX_PACKET) < 0) { k_msleep(10); break; }
                 k_msleep(10);
             }
         }
+
+        /* ── Phase 1b: RESET and retry (for idle chip or retries) ───
+         * If Phase 1a didn't catch an advertisement, send SH-2 RESET
+         * to force the chip to reboot with a fresh advertisement. */
+        if (!chip_alive) {
+            uint8_t rst[] = {BNO08X_CMD_RESET, 0x00};
+            uint8_t tx[BNO08X_SHTP_MAX_PACKET];
+            uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_EXECUTABLE, 0, rst, sizeof(rst));
+            if (i2c_write_dt(&tmp_dev, tx, txlen) == 0) {
+                tried_reset = true;
+                LOG_INF("Sent RESET at 0x%02X, waiting for fresh advertisement", addr);
+                k_msleep(200);
+                PHASE1_SCAN();
+            } else {
+                LOG_INF("Chip not present at 0x%02X (reset write failed)", addr);
+                continue;
+            }
+        }
+
+#undef PHASE1_SCAN
 
         /* If product ID was found in the advertisement, we're done. */
         if (detected_imu_ad >= 0) {
