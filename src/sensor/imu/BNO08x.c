@@ -762,6 +762,15 @@ retry:
         }
 
         if (detected_imu < 0) {
+            /* No product ID response, but any valid SHTP traffic proves
+             * a BNO08x is at this address.  bno08x_init will handle
+             * the proper reset + init sequence. */
+            if (n_reads > 0) {
+                LOG_INF("BNO08x detected via SHTP traffic at 0x%02X (n=%d), init will reset", addr, n_reads);
+                i2c_dev->addr = addr; *reg = 0x00;
+                if (interface_register) sensor_interface_register_sensor_imu_i2c(i2c_dev);
+                return IMU_BNO085;
+            }
             LOG_INF("Product ID not detected at 0x%02X (n_reads=%d)", addr, n_reads);
             continue;
         }
