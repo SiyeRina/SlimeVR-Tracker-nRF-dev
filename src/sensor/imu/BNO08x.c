@@ -52,7 +52,6 @@
 #include <string.h>
 #include <math.h>
 #include <hal/nrf_gpio.h>
-
 LOG_MODULE_REGISTER(BNO08X, LOG_LEVEL_INF);
 
 
@@ -93,7 +92,7 @@ static uint32_t shtp_build_packet(uint8_t *buf, uint8_t channel,
     memcpy(buf + BNO08X_SHTP_HEADER_SIZE, payload, payload_len);
     uint32_t total = BNO08X_SHTP_HEADER_SIZE + payload_len;
     buf[total] = shtp_crc8(buf, total);
-    return total + 1;
+    return total + 1;git push
 }
 
 static int shtp_send(uint8_t channel, const uint8_t *payload, uint32_t payload_len)
@@ -634,15 +633,26 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         /* Poll for advertisement or GRV */
         int64_t deadline = k_uptime_get() + 1500;
         bool got_advert = false;
+        int first_err = 0;
+        int attempt = 0;
         while (k_uptime_get() < deadline) {
             uint8_t hdr[4];
             int err = i2c_read_dt(&tmp_dev, hdr, 4);
             if (err < 0) {
+                if (first_err == 0) {
+                    first_err = err;
+                    LOG_ERR("I2C read failed at 0x%02X: err=%d (first of many)", addr, err);
+                }
                 k_msleep(20);
+                attempt++;
                 continue;
             }
             uint32_t pld_len = (uint32_t)hdr[0] | ((uint32_t)(hdr[1] & 0x3F) << 8);
             if (pld_len == 0 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
+                if (attempt == 0 && first_err == 0) {
+                    LOG_WRN("I2C read ok at 0x%02X but invalid pld_len=%u, hdr=[%02X %02X %02X %02X]",
+                            addr, pld_len, hdr[0], hdr[1], hdr[2], hdr[3]);
+                }
                 k_msleep(10);
                 continue;
             }
