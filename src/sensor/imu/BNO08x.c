@@ -638,6 +638,7 @@ retry:
          * retries where the large ad has already been sent. */
         bool chip_alive = false;
         int detected_imu_ad = -1;
+        bool saw_advertisement = false;
         int64_t ad_deadline = k_uptime_get() + 600;
         while (k_uptime_get() < ad_deadline) {
             uint8_t buf[BNO08X_SHTP_MAX_PACKET];
@@ -656,6 +657,7 @@ retry:
             uint8_t *pld = buf + 3;
 
             if (pld_len > 100) {
+                saw_advertisement = true;
                 LOG_INF("BNO08x advertisement at 0x%02X (%u bytes) pld[0]=0x%02X",
                         addr, pld_len, pld[0]);
                 /* Dump first 48 bytes of payload for debugging */
@@ -717,6 +719,19 @@ retry:
                 sensor_interface_register_sensor_imu_i2c(i2c_dev);
             }
             return detected_imu_ad;
+        }
+
+        /* Advertisement proves this is a BNO08x — accept even without
+         * explicit product ID (some firmware versions don't include
+         * a 0xF8 tag in the advertisement). */
+        if (saw_advertisement) {
+            LOG_INF("BNO08x confirmed via advertisement at 0x%02X, defaulting to BNO085", addr);
+            i2c_dev->addr = addr;
+            *reg = 0x00;
+            if (interface_register) {
+                sensor_interface_register_sensor_imu_i2c(i2c_dev);
+            }
+            return IMU_BNO085;
         }
 
         /* ── Phase 2: Send product ID request (fallback) ─────────── */
