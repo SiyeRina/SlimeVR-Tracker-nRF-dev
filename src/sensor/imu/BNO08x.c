@@ -672,7 +672,7 @@ retry:
                     chip_alive = true; break; \
                 } else { \
                     LOG_INF("BNO08x alive at 0x%02X (ch=%u len=%u pld[0]=0x%02X)", addr, _ch, _pl, _pld[0]); \
-                    chip_alive = true; break; \
+                    chip_alive = true; /* continue scanning — advertisement may follow */ \
                 } \
                 k_msleep(10); \
             } \
