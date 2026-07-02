@@ -686,9 +686,14 @@ retry:
             k_msleep(5);
         }
 
+        if (!got_advert && chip_alive) {
+            /* Chip is alive and outputting data even without a formal
+             * advertisement; proceed with product ID request anyway. */
+            LOG_INF("BNO08x alive at 0x%02X (proceeding without advertisement)", addr);
+            got_advert = true;
+        }
         if (!got_advert) {
-            LOG_INF("No response at 0x%02X (n_err=%d n_ok=%d%s)", addr, n_err, n_ok,
-                    chip_alive ? ", chip alive but no advertisement" : "");
+            LOG_INF("No response at 0x%02X (n_err=%d n_ok=%d)", addr, n_err, n_ok);
             continue;
         }
 
