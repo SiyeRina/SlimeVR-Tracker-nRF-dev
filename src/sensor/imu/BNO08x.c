@@ -628,16 +628,15 @@ retry:
         LOG_INF("BNO08x probe at 0x%02X", addr);
         tmp_dev.bus = bus; tmp_dev.addr = addr;
 
-        /* ── Phase 1: Wait for advertisement or proof-of-life ──────
-         * The BNO08x sends a ~276-byte boot advertisement on first boot.
-         * On retries the chip may be idle (small packets only), which
-         * is still proof enough — bno08x_init will handle the proper
-         * RESET + advertisement wait. */
-        bool chip_alive = false;
-        int detected_imu_ad = -1;
-        bool saw_advertisement = false;
-
-        int64_t dl = k_uptime_get() + 600;
+        /* Passive detection: just listen for SHTP traffic for up to
+         * 1.2 seconds.  Any valid SHTP packet from 0x4A or 0x4B proves
+         * a BNO08x is present — no TX, no RESET.  bno08x_init handles
+         * the full init sequence (RESET + advertisement wait) later.
+         *
+         * If the chip isn't powered yet when the probe starts, a longer
+         * timeout (1200ms vs the original 600ms) gives it time to boot. */
+        int64_t dl = k_uptime_get() + 1200;
+        bool found = false;
         while (k_uptime_get() < dl) {
             uint8_t buf[BNO08X_SHTP_MAX_PACKET];
             int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
@@ -646,8 +645,8 @@ retry:
             if (pl < 4 || pl > BNO08X_SHTP_MAX_PAYLOAD) { k_msleep(10); continue; }
             uint8_t ch = (buf[1] >> 6) & 0x03;
             uint8_t *pld = buf + 3;
+
             if (pl > 100) {
-                saw_advertisement = true; chip_alive = true;
                 LOG_INF("BNO08x advertisement at 0x%02X (%u bytes) pld[0]=0x%02X", addr, pl, pld[0]);
                 LOG_HEXDUMP_INF(pld, (pl < 48) ? pl : 48, "ad pld[0..47]");
                 if (pld[0] == 0x00) {
@@ -655,133 +654,28 @@ retry:
                     while (pos + 1 < pl) {
                         uint8_t tag = pld[pos]; uint8_t rlen = pld[pos + 1];
                         if (pos + 2 + rlen > pl) break;
-                        LOG_INF("  ad tag=0x%02X rlen=%u at pos=%u", tag, rlen, pos);
                         if (tag == 0xF8 && rlen >= 2) {
                             uint16_t pid = ((uint16_t)pld[pos + 3] << 8) | pld[pos + 2];
                             LOG_INF("Product ID 0x%04X from advertisement at 0x%02X", pid, addr);
-                            if (pid == BNO08X_PID_BNO085) detected_imu_ad = IMU_BNO085;
-                            else if (pid == BNO08X_PID_BNO086) detected_imu_ad = IMU_BNO086;
                             break;
                         }
                         pos += 2 + rlen;
                     }
                 }
+                found = true;
                 break;
             } else {
                 LOG_INF("BNO08x alive at 0x%02X (ch=%u len=%u pld[0]=0x%02X)", addr, ch, pl, pld[0]);
-                chip_alive = true;
-                /* Don't break — the advertisement may arrive later in the scan window */
-            }
-            k_msleep(10);
-        }
-
-        /* Drain boot burst. */
-        if (chip_alive) {
-            int64_t drain_end = k_uptime_get() + 100;
-            while (k_uptime_get() < drain_end) {
-                uint8_t dbuf[BNO08X_SHTP_MAX_PACKET];
-                if (i2c_read_dt(&tmp_dev, dbuf, BNO08X_SHTP_MAX_PACKET) < 0) { k_msleep(10); break; }
-                k_msleep(10);
-            }
-        }
-
-        /* Accept anything that proves a BNO08x is present:
-         * - Explicit product ID from advertisement (best)
-         * - Boot advertisement without 0xF8 tag (still confirms chip)
-         * - Any valid SHTP traffic from 0x4A/0x4B (chip is alive —
-         *   bno08x_init handles the full init with its own RESET) */
-        if (detected_imu_ad >= 0) {
-            i2c_dev->addr = addr; *reg = 0x00;
-            if (interface_register) sensor_interface_register_sensor_imu_i2c(i2c_dev);
-            return detected_imu_ad;
-        }
-        if (saw_advertisement) {
-            LOG_INF("BNO08x confirmed via advertisement at 0x%02X, assuming BNO085", addr);
-            i2c_dev->addr = addr; *reg = 0x00;
-            if (interface_register) sensor_interface_register_sensor_imu_i2c(i2c_dev);
-            return IMU_BNO085;
-        }
-        if (chip_alive) {
-            LOG_INF("BNO08x detected at 0x%02X (SHTP traffic, init will reset)", addr);
-            i2c_dev->addr = addr; *reg = 0x00;
-            if (interface_register) sensor_interface_register_sensor_imu_i2c(i2c_dev);
-            return IMU_BNO085;
-        }
-
-        /* ── Phase 2: Send product ID request (last resort) ───────── */
-        uint8_t cmd[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
-        uint8_t tx[BNO08X_SHTP_MAX_PACKET];
-        uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_COMMAND, 0, cmd, sizeof(cmd));
-        LOG_INF("TX prod-id req: len=%u pkt=[%02X %02X %02X %02X %02X %02X %02X]",
-                txlen, tx[0], tx[1], tx[2], tx[3], tx[4], tx[5], tx[6]);
-        if (i2c_write_dt(&tmp_dev, tx, txlen) < 0) {
-            LOG_ERR("Product ID request write failed at 0x%02X", addr);
-            continue;
-        }
-
-        /* ── Phase 3: Read product ID response ───────────────────── */
-        int64_t deadline = k_uptime_get() + 300;
-        int detected_imu = -1;
-        int n_reads = 0;
-        while (k_uptime_get() < deadline) {
-            uint8_t buf[BNO08X_SHTP_MAX_PACKET];
-            int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
-            if (err < 0) {
-                k_msleep(20);
-                continue;
-            }
-            n_reads++;
-
-            /* 3-byte SHTP header: payload at buf+3 */
-            uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
-            if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
-                k_msleep(5);
-                continue;
-            }
-            uint8_t ch = (buf[1] >> 6) & 0x03;
-            uint8_t *pld = buf + 3;
-
-            /* Print raw header bytes for offset verification */
-            LOG_INF("RX raw[0..7]=[%02X %02X %02X %02X %02X %02X %02X %02X]",
-                    buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
-            LOG_INF("RX ch=%u len=%u pld[0..3]=[%02X %02X %02X %02X]",
-                    ch, pld_len, pld[0], pld[1], pld[2], pld[3]);
-
-            if (pld[0] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
-                uint8_t pid_low = pld[1];
-                uint8_t pid_high = pld[2];
-                uint16_t pid = ((uint16_t)pid_high << 8) | pid_low;
-                LOG_INF("Product ID 0x%04X at 0x%02X", pid, addr);
-                if (pid == BNO08X_PID_BNO085)
-                    detected_imu = IMU_BNO085;
-                else if (pid == BNO08X_PID_BNO086)
-                    detected_imu = IMU_BNO086;
+                found = true;
                 break;
             }
-            k_msleep(5);
         }
 
-        if (detected_imu < 0) {
-            /* No product ID response, but any valid SHTP traffic proves
-             * a BNO08x is at this address.  bno08x_init will handle
-             * the proper reset + init sequence. */
-            if (n_reads > 0) {
-                LOG_INF("BNO08x detected via SHTP traffic at 0x%02X (n=%d), init will reset", addr, n_reads);
-                i2c_dev->addr = addr; *reg = 0x00;
-                if (interface_register) sensor_interface_register_sensor_imu_i2c(i2c_dev);
-                return IMU_BNO085;
-            }
-            LOG_INF("Product ID not detected at 0x%02X (n_reads=%d)", addr, n_reads);
-            continue;
+        if (found) {
+            i2c_dev->addr = addr; *reg = 0x00;
+            if (interface_register) sensor_interface_register_sensor_imu_i2c(i2c_dev);
+            return IMU_BNO085;
         }
-
-        /* Found via product ID request */
-        i2c_dev->addr = addr;
-        *reg = 0x00;
-        if (interface_register) {
-            sensor_interface_register_sensor_imu_i2c(i2c_dev);
-        }
-        return detected_imu;
     }
 
     /* If a retained address from a previous boot filtered out both BNO08x
