@@ -117,18 +117,19 @@ static int shtp_recv(uint8_t *buf, uint8_t **payload, uint32_t *payload_len, uin
     if (err < 0)
         return -1;
 
-    /* BNO08x → host uses 3-byte SHTP header (no continuation byte, no CRC):
+    /* BNO08x → host uses 4-byte SHTP header (same format as host→BNO08x):
      *   [0]       = payload length LSB
      *   [1]       = len MSB (bits 5:0) | channel (bits 7:6)
      *   [2]       = sequence number
-     * Payload starts at buf[3]. */
+     *   [3]       = continuation / reserved (0 for single-packet)
+     * Payload starts at buf[4]. */
     uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
     if (pld_len == 0 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
         LOG_WRN("Invalid payload length: %u", pld_len);
         return -1;
     }
 
-    *payload = buf + 3;
+    *payload = buf + 4;
     *payload_len = pld_len;
     *channel = (buf[1] >> 6) & 0x03;
     return 0;
@@ -628,13 +629,16 @@ retry:
         LOG_INF("BNO08x probe at 0x%02X", addr);
         tmp_dev.bus = bus; tmp_dev.addr = addr;
 
-        /* ── Phase 1: Wait for chip to come alive ────────────────────
-         * The BNO08x sends a ~276-byte boot advertisement (plus a few
-         * short status packets) on channel 0 after power-up.  We accept
-         * ANY valid SHTP packet as proof-of-life — the large ad only
-         * appears once per boot, but retries may see smaller packets
-         * or nothing at all (chip idle after boot). */
+        /* ── Phase 1: Wait for chip to come alive + parse boot ad ───
+         * The BNO08x sends a ~276-byte boot advertisement on channel 0
+         * after power-up.  The product ID is embedded as a 0xF8-tagged
+         * record within that advertisement — we parse it directly so we
+         * don't need a separate product ID request.
+         *
+         * We also accept ANY valid SHTP packet as proof-of-life for
+         * retries where the large ad has already been sent. */
         bool chip_alive = false;
+        int detected_imu_ad = -1;
         int64_t ad_deadline = k_uptime_get() + 600;
         while (k_uptime_get() < ad_deadline) {
             uint8_t buf[BNO08X_SHTP_MAX_PACKET];
@@ -643,21 +647,53 @@ retry:
                 k_msleep(50);
                 continue;
             }
+            /* 4-byte SHTP header, payload at buf+4 */
             uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
-            if (pld_len >= 4 && pld_len <= BNO08X_SHTP_MAX_PAYLOAD) {
-                uint8_t ch = (buf[1] >> 6) & 0x03;
-                if (pld_len > 100) {
-                    LOG_INF("BNO08x advertisement at 0x%02X (%u bytes)", addr, pld_len);
-                } else {
-                    LOG_INF("BNO08x alive at 0x%02X (ch=%u len=%u)", addr, ch, pld_len);
+            if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
+                k_msleep(10);
+                continue;
+            }
+            uint8_t ch = (buf[1] >> 6) & 0x03;
+            uint8_t *pld = buf + 4;
+
+            if (pld_len > 100) {
+                LOG_INF("BNO08x advertisement at 0x%02X (%u bytes)", addr, pld_len);
+                /* Parse product ID from boot advertisement.
+                 * Format: pld[0]=0x00 (ADVERTISE), then tagged records:
+                 *   [tag(1), len(1), data(len)] ...
+                 * Product ID record: tag=0xF8, len=2, data=[pid_lsb, pid_msb] */
+                if (pld[0] == 0x00) {
+                    uint32_t pos = 1;
+                    while (pos + 1 < pld_len) {
+                        uint8_t tag = pld[pos];
+                        uint8_t rlen = pld[pos + 1];
+                        if (pos + 2 + rlen > pld_len) break;
+                        if (tag == 0xF8 && rlen >= 2) {
+                            uint8_t pid_low  = pld[pos + 2];
+                            uint8_t pid_high = pld[pos + 3];
+                            uint16_t pid = ((uint16_t)pid_high << 8) | pid_low;
+                            LOG_INF("Product ID 0x%04X from advertisement at 0x%02X", pid, addr);
+                            if (pid == BNO08X_PID_BNO085)
+                                detected_imu_ad = IMU_BNO085;
+                            else if (pid == BNO08X_PID_BNO086)
+                                detected_imu_ad = IMU_BNO086;
+                            break;
+                        }
+                        pos += 2 + rlen;
+                    }
                 }
+                chip_alive = true;
+                break;
+            } else {
+                LOG_INF("BNO08x alive at 0x%02X (ch=%u len=%u pld[0]=0x%02X)",
+                        addr, ch, pld_len, pld[0]);
                 chip_alive = true;
                 break;
             }
             k_msleep(10);
         }
 
-        /* If we saw any packet, drain the rest of the boot burst. */
+        /* Drain remaining boot burst packets. */
         if (chip_alive) {
             int64_t drain_end = k_uptime_get() + 100;
             while (k_uptime_get() < drain_end) {
@@ -668,9 +704,17 @@ retry:
             }
         }
 
-        /* ── Phase 2: Send product ID request ───────────────────────
-         * Always attempt the write — if the chip is at this address
-         * but idle (e.g. on a retry), the write will still succeed. */
+        /* If product ID was found in the advertisement, we're done. */
+        if (detected_imu_ad >= 0) {
+            i2c_dev->addr = addr;
+            *reg = 0x00;
+            if (interface_register) {
+                sensor_interface_register_sensor_imu_i2c(i2c_dev);
+            }
+            return detected_imu_ad;
+        }
+
+        /* ── Phase 2: Send product ID request (fallback) ─────────── */
         uint8_t cmd[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
         uint8_t tx[BNO08X_SHTP_MAX_PACKET];
         uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_COMMAND, 0, cmd, sizeof(cmd));
@@ -694,15 +738,18 @@ retry:
             }
             n_reads++;
 
-            /* 3-byte SHTP header: [0]=lenL, [1]=lenH|ch<<6, [2]=seq */
+            /* 4-byte SHTP header: payload at buf+4 */
             uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
             if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
                 k_msleep(5);
                 continue;
             }
             uint8_t ch = (buf[1] >> 6) & 0x03;
-            uint8_t *pld = buf + 3;
+            uint8_t *pld = buf + 4;
 
+            /* Print raw header bytes for offset verification */
+            LOG_INF("RX raw[0..7]=[%02X %02X %02X %02X %02X %02X %02X %02X]",
+                    buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
             LOG_INF("RX ch=%u len=%u pld[0..3]=[%02X %02X %02X %02X]",
                     ch, pld_len, pld[0], pld[1], pld[2], pld[3]);
 
@@ -725,9 +772,9 @@ retry:
             continue;
         }
 
-        /* Found */
+        /* Found via product ID request */
         i2c_dev->addr = addr;
-        *reg = 0x00; /* I2C */
+        *reg = 0x00;
         if (interface_register) {
             sensor_interface_register_sensor_imu_i2c(i2c_dev);
         }
