@@ -634,7 +634,8 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         /* Poll for advertisement or GRV */
         int64_t deadline = k_uptime_get() + 1500;
         bool got_advert = false;
-        int n_err = 0, n_ok = 0, n_short = 0;
+        bool chip_alive = false;
+        int n_err = 0, n_ok = 0;
         while (k_uptime_get() < deadline) {
             uint8_t buf[BNO08X_SHTP_MAX_PACKET];
             /* Single-shot read to avoid two-phase race with streaming packets */
@@ -651,14 +652,29 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
             if (n_ok == 1)
                 LOG_INF("I2C ok at 0x%02X hdr=[%02X %02X %02X %02X] pld_len=%u",
                         addr, buf[0], buf[1], buf[2], buf[3], pld_len);
-            if (pld_len == 0 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
-                n_short++;
+            /* Allow pld_len=0 (heartbeat/empty SHTP packets), only reject overflow */
+            if (pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
                 k_msleep(10);
+                continue;
+            }
+            /* Skip empty packets silently (BNO08x heartbeats during boot) */
+            if (pld_len == 0) {
+                k_msleep(5);
                 continue;
             }
             uint32_t check_len = BNO08X_SHTP_HEADER_SIZE + pld_len;
             if (shtp_crc8(buf, check_len) != buf[check_len])
                 continue;
+
+            /* Any valid SHTP packet proves the chip is running application firmware */
+            if (!chip_alive) {
+                chip_alive = true;
+                LOG_INF("BNO08x application running at 0x%02X (channel %u, len %u)",
+                        addr, buf[2], pld_len);
+                /* Extend deadline to wait for the boot advertisement */
+                int64_t extend = k_uptime_get() + 2000;
+                if (extend > deadline) deadline = extend;
+            }
 
             if (buf[2] == 0 && pld_len >= 1 && buf[4] == 0x00) {
                 got_advert = true;
@@ -672,7 +688,8 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         }
 
         if (!got_advert) {
-            LOG_INF("No response at 0x%02X (n_err=%d n_ok=%d n_short=%d)", addr, n_err, n_ok, n_short);
+            LOG_INF("No response at 0x%02X (n_err=%d n_ok=%d%s)", addr, n_err, n_ok,
+                    chip_alive ? ", chip alive but no advertisement" : "");
             continue;
         }
 
