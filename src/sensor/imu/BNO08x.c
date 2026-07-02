@@ -693,7 +693,7 @@ retry:
         /* ── Phase 1b: RESET and retry (for idle chip or retries) ───
          * If Phase 1a didn't catch an advertisement, send SH-2 RESET
          * to force the chip to reboot with a fresh advertisement. */
-        if (!chip_alive) {
+        if (!saw_advertisement) {
             uint8_t rst[] = {BNO08X_CMD_RESET, 0x00};
             uint8_t tx[BNO08X_SHTP_MAX_PACKET];
             uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_EXECUTABLE, 0, rst, sizeof(rst));
