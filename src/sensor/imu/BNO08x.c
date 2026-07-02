@@ -49,10 +49,42 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/devicetree.h>
 #include <string.h>
 #include <math.h>
 #include <hal/nrf_gpio.h>
 LOG_MODULE_REGISTER(BNO08X, LOG_LEVEL_INF);
+
+/* =========================================================================
+ *  Hardware reset via sensor VCC power-cycle
+ * ========================================================================= */
+#define ZEPHYR_USER_NODE DT_PATH(zephyr_user)
+
+#if DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, vcc_gpios)
+#include <zephyr/drivers/gpio.h>
+static const struct gpio_dt_spec bno_vcc = GPIO_DT_SPEC_GET(ZEPHYR_USER_NODE, vcc_gpios);
+#endif
+
+static int bno08x_hardware_reset(void)
+{
+#if DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, vcc_gpios)
+	if (!device_is_ready(bno_vcc.port)) {
+		LOG_ERR("VCC GPIO port not ready for hardware reset");
+		return -1;
+	}
+
+	LOG_INF("Power-cycling sensor VCC for hardware reset...");
+	gpio_pin_set_dt(&bno_vcc, 0);
+	k_msleep(100);
+	gpio_pin_set_dt(&bno_vcc, 1);
+	k_msleep(50);
+	LOG_INF("Sensor VCC restored");
+	return 0;
+#else
+	LOG_WRN("VCC GPIO not available, cannot hardware reset");
+	return -1;
+#endif
+}
 
 
 /* =========================================================================
@@ -310,6 +342,9 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     uint8_t *payload;
     uint32_t payload_len;
 
+    bool hw_reset_attempted = false;
+
+retry:
     /* Send SH-2 RESET (0x01) on the EXECUTABLE channel.
      * The probe has already consumed all pending SHTP data; no drain
      * is needed here (a blocking read on an empty FIFO would trigger
@@ -321,6 +356,10 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     int err = shtp_send(BNO08X_SHTP_CH_EXECUTABLE, reset_cmd, sizeof(reset_cmd));
     if (err < 0) {
         LOG_ERR("RESET send failed: %d", err);
+        if (!hw_reset_attempted && bno08x_hardware_reset() == 0) {
+            hw_reset_attempted = true;
+            goto retry;
+        }
         goto unlock;
     }
     LOG_INF("RESET sent, waiting for reboot...");
@@ -331,6 +370,10 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
                                 BNO08X_SHTP_CH_COMMAND, 800);
     if (ret < 0) {
         LOG_ERR("No boot advertisement after RESET");
+        if (!hw_reset_attempted && bno08x_hardware_reset() == 0) {
+            hw_reset_attempted = true;
+            goto retry;
+        }
         goto unlock;
     }
 

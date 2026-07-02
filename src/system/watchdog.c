@@ -49,6 +49,7 @@ static const char *channel_names[] = {
 
 /* Store WDT reset status before RESETREAS is cleared by early_check */
 static bool last_reset_was_wdt = false;
+static uint32_t saved_resetreas = 0;  /* Full RESETREAS value for diagnostics */
 
 /* Default timeout values in milliseconds */
 static const uint32_t default_timeouts[] = {
@@ -175,6 +176,54 @@ static void enter_dfu_mode(void)
  */
 static int watchdog_early_check(void)
 {
+	/* Read full RESETREAS register before clearing */
+#ifdef NRF_RESET
+	saved_resetreas = NRF_RESET->RESETREAS;
+#else
+	saved_resetreas = NRF_POWER->RESETREAS;
+#endif
+
+	/* Print reset reason diagnostics early (printk - logging not ready yet) */
+	if (saved_resetreas) {
+		printk("\n=== RESET DIAGNOSTICS ===\n");
+		printk("RESETREAS: 0x%08X\n", saved_resetreas);
+#ifdef RESET_RESETREAS_RESETPIN_Msk
+		if (saved_resetreas & RESET_RESETREAS_RESETPIN_Msk)
+			printk("  [PIN]    Hardware pin reset\n");
+#endif
+#ifdef RESET_RESETREAS_DOG_Msk
+		if (saved_resetreas & RESET_RESETREAS_DOG_Msk)
+			printk("  [DOG]    Watchdog reset\n");
+#endif
+#ifdef RESET_RESETREAS_SREQ_Msk
+		if (saved_resetreas & RESET_RESETREAS_SREQ_Msk)
+			printk("  [SREQ]   Software requested reset\n");
+#endif
+#ifdef RESET_RESETREAS_LOCKUP_Msk
+		if (saved_resetreas & RESET_RESETREAS_LOCKUP_Msk)
+			printk("  [LOCKUP] CPU lockup reset\n");
+#endif
+#ifdef RESET_RESETREAS_OFF_Msk
+		if (saved_resetreas & RESET_RESETREAS_OFF_Msk)
+			printk("  [OFF]    Wake from system OFF mode\n");
+#endif
+#ifdef RESET_RESETREAS_DIF_Msk
+		if (saved_resetreas & RESET_RESETREAS_DIF_Msk)
+			printk("  [DIF]    Debug interface reset\n");
+#endif
+#ifdef RESET_RESETREAS_NFC_Msk
+		if (saved_resetreas & RESET_RESETREAS_NFC_Msk)
+			printk("  [NFC]    NFC field reset\n");
+#endif
+#ifdef RESET_RESETREAS_VBUS_Msk
+		if (saved_resetreas & RESET_RESETREAS_VBUS_Msk)
+			printk("  [VBUS]   VBUS power reset\n");
+#endif
+		printk("===========================\n\n");
+	} else {
+		printk("\n=== RESET: Power-on reset (no prior reset reason) ===\n\n");
+	}
+
 	/* Check if last reset was caused by watchdog - save for later use */
 	last_reset_was_wdt = watchdog_caused_reset();
 
@@ -203,6 +252,27 @@ int watchdog_init(void)
 	if (watchdog_initialized) {
 		return 0;
 	}
+
+	/* Print full reset diagnostics via LOG (logging is now available) */
+	LOG_INF("=== Reset Diagnostics ===");
+	if (saved_resetreas) {
+		LOG_INF("RESETREAS: 0x%08X", saved_resetreas);
+		if (saved_resetreas & (1U << 0))  LOG_INF("  [PIN]    Hardware pin reset");
+		if (saved_resetreas & (1U << 1))  LOG_INF("  [DOG]    Watchdog reset");
+		if (saved_resetreas & (1U << 2))  LOG_INF("  [SREQ]   Software requested reset");
+		if (saved_resetreas & (1U << 3))  LOG_INF("  [LOCKUP] CPU lockup reset");
+		if (saved_resetreas & (1U << 4))  LOG_INF("  [OFF]    Wake from system OFF mode");
+		if (saved_resetreas & (1U << 16)) LOG_INF("  [DIF]    Debug interface reset");
+		if (saved_resetreas & (1U << 18)) LOG_INF("  [NFC]    NFC field reset");
+		if (saved_resetreas & (1U << 19)) LOG_INF("  [VBUS]   VBUS power reset");
+	} else {
+		LOG_INF("RESETREAS: 0 (Power-on reset)");
+	}
+
+	/* Read reboot counter from retained memory */
+	uint8_t rb_cnt = reboot_counter_read();
+	LOG_INF("Reboot counter: %u (reset_mode=%d)", rb_cnt, rb_cnt ? (int)rb_cnt - 100 : -1);
+	LOG_INF("=========================");
 
 	/* Initialize channel ID array */
 	for (int i = 0; i < WDT_CHANNEL_COUNT; i++) {
