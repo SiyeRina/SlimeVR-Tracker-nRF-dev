@@ -628,6 +628,20 @@ retry:
         LOG_INF("BNO08x probe at 0x%02X", addr);
         tmp_dev.bus = bus; tmp_dev.addr = addr;
 
+        /* Send SH-2 RESET to force the chip to reboot and send a fresh
+         * boot advertisement.  This is essential for retry scenarios
+         * where the chip has already booted and gone idle. */
+        {
+            uint8_t rst[] = {BNO08X_CMD_RESET, 0x00};
+            uint8_t tx[BNO08X_SHTP_MAX_PACKET];
+            uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_EXECUTABLE, 0, rst, sizeof(rst));
+            if (i2c_write_dt(&tmp_dev, tx, txlen) < 0) {
+                LOG_INF("Chip not present at 0x%02X (reset write failed)", addr);
+                continue;
+            }
+            k_msleep(150); /* wait for chip to reboot after reset */
+        }
+
         /* ── Phase 1: Wait for chip to come alive + parse boot ad ───
          * The BNO08x sends a ~276-byte boot advertisement on channel 0
          * after power-up.  The product ID is embedded as a 0xF8-tagged
