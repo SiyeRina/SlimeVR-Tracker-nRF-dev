@@ -309,6 +309,9 @@ K_THREAD_DEFINE(sensor_init_thread_id, 256, sensor_request_scan, true, NULL, NUL
 #define IMU_INT_EXISTS true
 static const struct gpio_dt_spec int0 = GPIO_DT_SPEC_GET(ZEPHYR_USER_NODE, int0_gpios);
 #endif
+#if DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, int1_gpios)
+static const struct gpio_dt_spec int1 = GPIO_DT_SPEC_GET(ZEPHYR_USER_NODE, int1_gpios);
+#endif
 
 const char *sensor_get_sensor_imu_name(void)
 {
@@ -1129,14 +1132,20 @@ int sensor_init(void)
 	uint8_t pin_config = sensor_imu->setup_DRDY(sensor_fifo_threshold);
 	if (pin_config == 0)
 		return -1;
-	uint32_t int0_gpios = NRF_DT_GPIOS_TO_PSEL(ZEPHYR_USER_NODE, int0_gpios);
-	LOG_INF("FIFO THS/WM/WTM GPIO pin: %u, config: %u", int0_gpios, pin_config);
+#if DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, int1_gpios)
+	bool is_bno = (sensor_imu_id == IMU_BNO085 || sensor_imu_id == IMU_BNO086 ||
+		       sensor_imu_id == IMU_BNO085_SPI || sensor_imu_id == IMU_BNO086_SPI);
+	const struct gpio_dt_spec *int_pin = is_bno ? &int1 : &int0;
+#else
+	const struct gpio_dt_spec *int_pin = &int0;
+#endif
+	LOG_INF("FIFO THS/WM/WTM GPIO pin: %u, config: %u", int_pin->pin, pin_config);
 	uint32_t pull_flags = ((pin_config >> 4) == NRF_GPIO_PIN_PULLDOWN ? GPIO_PULL_DOWN : 0) | ((pin_config >> 4) == NRF_GPIO_PIN_PULLUP ? GPIO_PULL_UP : 0);
-	gpio_pin_configure_dt(&int0, GPIO_INPUT | pull_flags);
+	gpio_pin_configure_dt(int_pin, GPIO_INPUT | pull_flags);
 	uint32_t int_flags = ((pin_config & 0xF) == NRF_GPIO_PIN_SENSE_LOW ? GPIO_INT_EDGE_FALLING : 0) | ((pin_config & 0xF) == NRF_GPIO_PIN_SENSE_HIGH ? GPIO_INT_EDGE_RISING : 0);
-	gpio_pin_interrupt_configure_dt(&int0, int_flags);
-	gpio_init_callback(&sensor_cb_data, sensor_interrupt_handler, BIT(int0.pin));
-	gpio_add_callback(int0.port, &sensor_cb_data);
+	gpio_pin_interrupt_configure_dt(int_pin, int_flags);
+	gpio_init_callback(&sensor_cb_data, sensor_interrupt_handler, BIT(int_pin->pin));
+	gpio_add_callback(int_pin->port, &sensor_cb_data);
 #else
 	LOG_WRN("IMU FIFO THS/WM/WTM GPIO does not exist");
 	LOG_WRN("IMU FIFO THS/WM/WTM not available");
