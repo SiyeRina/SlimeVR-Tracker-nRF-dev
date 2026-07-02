@@ -111,32 +111,32 @@ static int shtp_send(uint8_t channel, const uint8_t *payload, uint32_t payload_l
 
 /* Read a single SHTP packet from the BNO08x over I2C.
  *
- * SHTP over I2C delivers one packet per read.  We read the 4-byte
- * header first to determine payload length, then read exactly that
- * many payload bytes in a second I2C transaction.  This avoids
- * over-reading (which can pull in the next packet or cause NACKs). */
+ * SHTP over I2C delivers one packet per I2C read transaction.
+ * We read the maximum expected packet size in one transaction;
+ * the BNO08x pads with 0xFF for any bytes the master requests
+ * beyond the actual packet.  SHTP packets are non-fragmented
+ * (continuation byte is always 0x00) so a single read is safe. */
 static int shtp_recv(uint8_t *buf, uint8_t **payload, uint32_t *payload_len, uint8_t *channel)
 {
-    /* Step 1: read 4-byte SHTP header */
-    int err = ssi_read(SENSOR_INTERFACE_DEV_IMU, buf, 4);
+    int err = ssi_read(SENSOR_INTERFACE_DEV_IMU, buf, BNO08X_SHTP_MAX_PACKET);
     if (err < 0)
         return -1;
 
+    /* SHTP header (4 bytes):
+     *   [0]       = payload length LSB
+     *   [1]       = len MSB (bits 5:0) | channel (bits 7:6)
+     *   [2]       = sequence number
+     *   [3]       = continuation byte (0x00 for single segment)
+     * Payload starts at buf[4]. */
     uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
     if (pld_len == 0 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
         LOG_WRN("Invalid payload length: %u", pld_len);
         return -1;
     }
 
-    *channel = (buf[1] >> 6) & 0x03;
-
-    /* Step 2: read exactly payload_len bytes */
-    err = ssi_read(SENSOR_INTERFACE_DEV_IMU, buf + 4, pld_len);
-    if (err < 0)
-        return -1;
-
     *payload = buf + 4;
     *payload_len = pld_len;
+    *channel = (buf[1] >> 6) & 0x03;
     return 0;
 }
 
