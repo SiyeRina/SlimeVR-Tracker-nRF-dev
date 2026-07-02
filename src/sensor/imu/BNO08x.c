@@ -459,11 +459,19 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
         uint8_t channel;
 
         int err = shtp_recv(pkt_buf, &payload, &payload_len, &channel);
-        if (err < 0)
+        if (err < 0) {
+            static int recv_errs;
+            if (++recv_errs <= 3)
+                LOG_WRN("shtp_recv fail #%d", recv_errs);
             break;
+        }
 
-        if (channel != BNO08X_SHTP_CH_INPUT)
+        if (channel != BNO08X_SHTP_CH_INPUT) {
+            static int non_input;
+            if (++non_input <= 3)
+                LOG_INF("skip ch=%u len=%u id=0x%02X", channel, payload_len, payload[0]);
             continue;
+        }
 
         uint8_t report_id = payload[0];
 
@@ -472,8 +480,12 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
             continue;
         }
 
-        if (report_id != BNO08X_REPORT_GAME_ROTATION_VECTOR || payload_len < 24)
+        if (report_id != BNO08X_REPORT_GAME_ROTATION_VECTOR || payload_len < 24) {
+            static int non_grv;
+            if (++non_grv <= 3)
+                LOG_WRN("skip INPUT id=0x%02X len=%u", report_id, payload_len);
             continue;
+        }
 
         float q[4];
         decode_grv(payload, q);
@@ -497,6 +509,17 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
 
         float dt_ms = (float)accumulated_delay_us * 1e-3f;
         if (dt_ms < 0.001f) dt_ms = 1.0f; /* safety clamp */
+
+        /* Debug: log first few GRV samples */
+        static int grv_sample_count;
+        if (grv_sample_count < 5) {
+            float n = sqrtf(q[0]*q[0]+q[1]*q[1]+q[2]*q[2]+q[3]*q[3]);
+            LOG_INF("GRV #%d: q=[%.3f %.3f %.3f %.3f] norm=%.3f dt=%.2fms dl=%u",
+                    grv_sample_count, (double)q[0], (double)q[1],
+                    (double)q[2], (double)q[3], (double)n,
+                    (double)dt_ms, delay_us);
+            grv_sample_count++;
+        }
 
         /* Pack sample with dt */
         pack_sample(rawData + samples * BNO08X_PACKET_SIZE, q, dt_ms);
