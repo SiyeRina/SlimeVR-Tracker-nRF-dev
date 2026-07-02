@@ -84,10 +84,16 @@ static uint32_t shtp_build_packet(uint8_t *buf, uint8_t channel,
                                   uint8_t seq, const uint8_t *payload,
                                   uint32_t payload_len)
 {
+    /* Standard SHTP 4-byte header (host → BNO08x):
+     *   [0]       = payload length LSB
+     *   [1]       = len MSB (bits 5:0) | channel (bits 7:6)
+     *   [2]       = sequence number
+     *   [3]       = continuation / reserved (0)
+     */
     buf[0] = (uint8_t)(payload_len & 0xFF);
-    buf[1] = (uint8_t)((payload_len >> 8) & 0x3F);
-    buf[2] = channel;
-    buf[3] = seq;
+    buf[1] = (uint8_t)(((payload_len >> 8) & 0x3F) | ((channel & 0x03) << 6));
+    buf[2] = seq;
+    buf[3] = 0x00;
 
     memcpy(buf + BNO08X_SHTP_HEADER_SIZE, payload, payload_len);
     uint32_t total = BNO08X_SHTP_HEADER_SIZE + payload_len;
@@ -111,20 +117,20 @@ static int shtp_recv(uint8_t *buf, uint8_t **payload, uint32_t *payload_len, uin
     if (err < 0)
         return -1;
 
+    /* BNO08x → host uses 3-byte SHTP header (no continuation byte, no CRC):
+     *   [0]       = payload length LSB
+     *   [1]       = len MSB (bits 5:0) | channel (bits 7:6)
+     *   [2]       = sequence number
+     * Payload starts at buf[3]. */
     uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
     if (pld_len == 0 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
         LOG_WRN("Invalid payload length: %u", pld_len);
         return -1;
     }
 
-    uint32_t check_len = BNO08X_SHTP_HEADER_SIZE + pld_len;
-    /* BNO08x output SHTP packets do not include a CRC byte;
-     * the byte at position check_len is the start of the next packet. */
-    (void)check_len;
-
-    *payload = buf + BNO08X_SHTP_HEADER_SIZE;
+    *payload = buf + 3;
     *payload_len = pld_len;
-    *channel = buf[2];
+    *channel = (buf[1] >> 6) & 0x03;
     return 0;
 }
 
@@ -652,29 +658,28 @@ retry:
             }
             n_reads++;
             if (n_reads == 1) {
-                LOG_INF("RX raw[0..7]=[%02X %02X %02X %02X %02X %02X %02X %02X]",
+                LOG_INF("RX raw[0..15]=[%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]",
                         buf[0], buf[1], buf[2], buf[3],
-                        buf[4], buf[5], buf[6], buf[7]);
+                        buf[4], buf[5], buf[6], buf[7],
+                        buf[8], buf[9], buf[10], buf[11],
+                        buf[12], buf[13], buf[14], buf[15]);
             }
+            /* BNO08x → host uses 3-byte SHTP header:
+             *   [0]=lenL, [1]=lenH|ch<<6, [2]=seq, payload at [3] */
             uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
             if (pld_len < 4 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
                 k_msleep(5);
                 continue;
             }
-            /* Check at both possible header offsets (4-byte and 3-byte) */
-            uint8_t ch4 = buf[2];                           /* 4-byte hdr: ch at [2] */
-            uint8_t pld0_4 = buf[4];                        /* 4-byte hdr: pld[0] */
-            uint8_t ch3 = (buf[1] >> 6) & 0x03;             /* 3-byte hdr: ch in [1] */
-            uint8_t pld0_3 = buf[3];                        /* 3-byte hdr: pld[0] */
+            uint8_t ch = (buf[1] >> 6) & 0x03;
+            uint8_t *pld = buf + 3;
 
-            if (pld0_4 == BNO08X_CMD_PRODUCT_ID_RESPONSE || pld0_3 == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
-                /* Determine which header format matched */
-                uint8_t pid_low, pid_high;
-                if (pld0_4 == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
-                    pid_low = buf[5]; pid_high = buf[6];
-                } else {
-                    pid_low = buf[4]; pid_high = buf[5];
-                }
+            LOG_INF("RX ch=%u len=%u pld[0..3]=[%02X %02X %02X %02X]",
+                    ch, pld_len, pld[0], pld[1], pld[2], pld[3]);
+
+            if (pld[0] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
+                uint8_t pid_low = pld[1];
+                uint8_t pid_high = pld[2];
                 uint16_t pid = ((uint16_t)pid_high << 8) | pid_low;
                 LOG_INF("Product ID 0x%04X at 0x%02X", pid, addr);
                 if (pid == BNO08X_PID_BNO085)
