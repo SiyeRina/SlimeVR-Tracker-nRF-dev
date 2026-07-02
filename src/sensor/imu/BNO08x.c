@@ -633,26 +633,24 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         /* Poll for advertisement or GRV */
         int64_t deadline = k_uptime_get() + 1500;
         bool got_advert = false;
-        int first_err = 0;
-        int attempt = 0;
+        int n_err = 0, n_ok = 0, n_short = 0;
         while (k_uptime_get() < deadline) {
             uint8_t hdr[4];
             int err = i2c_read_dt(&tmp_dev, hdr, 4);
             if (err < 0) {
-                if (first_err == 0) {
-                    first_err = err;
-                    LOG_ERR("I2C read failed at 0x%02X: err=%d (first of many)", addr, err);
-                }
+                if (n_err == 0)
+                    LOG_ERR("I2C read err=%d at 0x%02X", err, addr);
+                n_err++;
                 k_msleep(20);
-                attempt++;
                 continue;
             }
+            n_ok++;
             uint32_t pld_len = (uint32_t)hdr[0] | ((uint32_t)(hdr[1] & 0x3F) << 8);
+            if (n_ok == 1)
+                LOG_INF("I2C ok at 0x%02X hdr=[%02X %02X %02X %02X] pld_len=%u",
+                        addr, hdr[0], hdr[1], hdr[2], hdr[3], pld_len);
             if (pld_len == 0 || pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
-                if (attempt == 0 && first_err == 0) {
-                    LOG_WRN("I2C read ok at 0x%02X but invalid pld_len=%u, hdr=[%02X %02X %02X %02X]",
-                            addr, pld_len, hdr[0], hdr[1], hdr[2], hdr[3]);
-                }
+                n_short++;
                 k_msleep(10);
                 continue;
             }
@@ -678,7 +676,7 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
         }
 
         if (!got_advert) {
-            LOG_INF("No response at 0x%02X", addr);
+            LOG_INF("No response at 0x%02X (n_err=%d n_ok=%d n_short=%d)", addr, n_err, n_ok, n_short);
             continue;
         }
 
