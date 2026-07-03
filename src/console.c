@@ -522,6 +522,17 @@ static void print_lastreset(void)
 		printk("  Reason: %u (%s)\n", freason, fname);
 		if (retained->fatal_error_info.pc != 0) {
 			printk("  PC:     0x%08X\n", retained->fatal_error_info.pc);
+			printk("  LR:     0x%08X\n", retained->fatal_error_info.lr);
+		}
+		if (retained->fatal_error_info.cfsr != 0) {
+			printk("  CFSR:   0x%08X (UFSR=%02X BFSR=%02X MMFSR=%02X)\n",
+			       retained->fatal_error_info.cfsr,
+			       (retained->fatal_error_info.cfsr >> 16) & 0xFFFF,
+			       (retained->fatal_error_info.cfsr >> 8) & 0xFF,
+			       retained->fatal_error_info.cfsr & 0xFF);
+		}
+		if (retained->fatal_error_info.hfsr != 0) {
+			printk("  HFSR:   0x%08X\n", retained->fatal_error_info.hfsr);
 		}
 		if (retained->fatal_error_info.assert_line != 0) {
 			printk("  Assert: %s:%u\n",

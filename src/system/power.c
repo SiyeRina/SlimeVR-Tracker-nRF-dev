@@ -21,6 +21,7 @@
 #include <hal/nrf_twim.h>
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <zephyr/sys/__assert.h>
+#include <zephyr/fatal.h>
 #include <stdint.h>
 
 #include "power.h"
@@ -793,4 +794,51 @@ void assert_post_action(const char *file, unsigned int line)
 	k_panic();
 }
 #endif /* !CONFIG_ASSERT_NO_FILE_INFO */
+
+/*
+ * Override Zephyr's weak k_sys_fatal_error_handler to capture CPU fault
+ * details (PC, LR, CFSR, HFSR) to retained RAM before the system reboots.
+ * This handles ARM CPU exceptions (HardFault, BusFault, MemManage, etc.)
+ * that bypass the assertion handlers.
+ */
+void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
+{
+	/* ARM Cortex-M fault status registers (fixed addresses) */
+#define SCB_CFSR  (*(volatile uint32_t *)0xE000ED28u)
+#define SCB_HFSR  (*(volatile uint32_t *)0xE000ED2Cu)
+
+	if (retained && retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC) {
+		retained->fatal_error_info.reason = reason;
+		retained->fatal_error_info.cfsr = SCB_CFSR;
+		retained->fatal_error_info.hfsr = SCB_HFSR;
+
+		if (esf != NULL) {
+			retained->fatal_error_info.pc  = esf->basic.pc;
+			retained->fatal_error_info.lr  = esf->basic.lr;
+		} else {
+			retained->fatal_error_info.pc = 0;
+			retained->fatal_error_info.lr = 0;
+		}
+	}
+
+	/* Log the fatal error - uses log system if available, falls back to printk */
+	printk("\n=== ZEPHYR FATAL ERROR ===\n");
+	printk("Reason: %u\n", reason);
+	if (esf != NULL) {
+		printk("PC:  0x%08X\n", esf->basic.pc);
+		printk("LR:  0x%08X\n", esf->basic.lr);
+	}
+	printk("CFSR: 0x%08X\n", SCB_CFSR);
+	printk("HFSR: 0x%08X\n", SCB_HFSR);
+
+	/* Brief delay to allow log output (UART/RTT) to flush */
+	for (volatile uint32_t d = 0; d < 1000000; d++) {
+		__asm__ volatile("nop");
+	}
+
+	/* Perform system reboot (CONFIG_RESET_ON_FATAL_ERROR path) */
+	sys_arch_reboot(0);
+
+	CODE_UNREACHABLE;
+}
 

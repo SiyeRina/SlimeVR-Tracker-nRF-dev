@@ -152,6 +152,9 @@ struct retained_data {
 	struct {
 		uint32_t reason;               // k_sys_fatal_error_handler reason code
 		uint32_t pc;                   // Program counter at fault (0 if unavailable)
+		uint32_t lr;                   // Link register at fault
+		uint32_t cfsr;                 // ARM Configurable Fault Status Register
+		uint32_t hfsr;                 // ARM HardFault Status Register
 		uint32_t assert_line;          // __LINE__ of failed assertion (0 if not an assert)
 		uint32_t assert_file_addr;     // Flash address of __FILE__ string (0 if not an assert)
 		uint32_t magic;                // Magic number to validate
