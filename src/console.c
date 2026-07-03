@@ -523,6 +523,11 @@ static void print_lastreset(void)
 		if (retained->fatal_error_info.pc != 0) {
 			printk("  PC:     0x%08X\n", retained->fatal_error_info.pc);
 		}
+		if (retained->fatal_error_info.assert_line != 0) {
+			printk("  Assert: %s:%u\n",
+			       (const char *)(uintptr_t)retained->fatal_error_info.assert_file_addr,
+			       retained->fatal_error_info.assert_line);
+		}
 	}
 
 	printk("Watchdog:\n");

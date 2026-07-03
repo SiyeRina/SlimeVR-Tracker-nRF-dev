@@ -101,6 +101,9 @@ bool retained_validate(void)
 
 		/* Initialize last_reset_info magic (counters are zero from memset) */
 		retained->last_reset_info.magic = LAST_RESET_INFO_MAGIC;
+
+		/* Initialize fatal_error_info magic (counters are zero from memset) */
+		retained->fatal_error_info.magic = FATAL_ERROR_INFO_MAGIC;
 	}
 
 	/* Reset to accrue runtime from this session. */

@@ -20,6 +20,7 @@
 #include <hal/nrf_spim.h>
 #include <hal/nrf_twim.h>
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
+#include <zephyr/sys/__assert.h>
 #include <stdint.h>
 
 #include "power.h"
@@ -773,4 +774,26 @@ static void power_thread(void)
 
 		k_msleep(100);
 	}
+}
+
+/*
+ * Override Zephyr's weak assert_post_action to capture assertion file:line
+ * to retained RAM before the system reboots. This survives across resets
+ * and can be read by the 'lastreset' console command.
+ */
+void assert_post_action(const char *file, unsigned int line)
+{
+	/* Save assertion location to retained RAM for post-reset diagnostics */
+	if (retained && retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC) {
+		retained->fatal_error_info.assert_line = line;
+		retained->fatal_error_info.assert_file_addr = (uint32_t)(uintptr_t)file;
+	}
+
+	k_panic();
+}
+
+/* No-file-info variant (fallback when CONFIG_ASSERT_NO_FILE_INFO=y) */
+void assert_post_action(void)
+{
+	k_panic();
 }
