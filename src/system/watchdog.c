@@ -250,6 +250,38 @@ static int watchdog_early_check(void)
 		retained->last_reset_info.sreq_flags = SREQ_FLAG_DETECTED;
 	}
 
+	/* ARM Cortex-M fault status registers persist across soft resets.
+	 * Capture them now to help diagnose CPU exceptions that caused the
+	 * last SREQ reset (reason=0 K_ERR_CPU_EXCEPTION in k_sys_fatal_error_handler).
+	 * Read BEFORE any Zephyr init code touches the SCB.
+	 */
+#define SCB_CFSR  (*(volatile uint32_t *)0xE000ED28u)
+#define SCB_HFSR  (*(volatile uint32_t *)0xE000ED2Cu)
+	if (retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC) {
+		retained->fatal_error_info.cfsr = SCB_CFSR;
+		retained->fatal_error_info.hfsr = SCB_HFSR;
+		/* We can't get PC/LR here (stack is lost on reset), but
+		 * the CFSR/HFSR bits precisely identify the fault type:
+		 *   CFSR[25]: DIVBYZERO, CFSR[24]: UNALIGNED
+		 *   CFSR[19:16]: NOCP, INVPC, INVSTATE, UNDEFINSTR
+		 *   CFSR[15:8]: BFARVALID, etc (BusFault)
+		 *   CFSR[7:0]:  MMARVALID, etc (MemManage)
+		 *   HFSR[30]: FORCED (escalated to HardFault), HFSR[1]: VECTBL
+		 */
+	} else {
+		retained->fatal_error_info.magic = FATAL_ERROR_INFO_MAGIC;
+		retained->fatal_error_info.cfsr = SCB_CFSR;
+		retained->fatal_error_info.hfsr = SCB_HFSR;
+		retained->fatal_error_info.reason = 0;
+		retained->fatal_error_info.pc = 0;
+		retained->fatal_error_info.lr = 0;
+		retained->fatal_error_info.assert_line = 0;
+		retained->fatal_error_info.assert_file_addr = 0;
+	}
+	/* Clear the fault registers so next boot doesn't see stale flags */
+	SCB_CFSR = SCB_CFSR; /* Write-back clears all sticky bits */
+	SCB_HFSR = SCB_HFSR;
+
 	/* Check if last reset was caused by watchdog - save for later use */
 	last_reset_was_wdt = watchdog_caused_reset();
 
