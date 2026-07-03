@@ -2,6 +2,7 @@
 #include "system/system.h"
 #include "system/battery_tracker.h"
 #include "system/test_mode.h"
+#include "system/watchdog.h"
 #include "sensor/sensor.h"
 #include "sensor/calibration.h"
 #include "sensor/fusion/vqf/vqf_fusion.h"
