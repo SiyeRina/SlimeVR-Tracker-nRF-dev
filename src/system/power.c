@@ -463,6 +463,16 @@ static void sys_system_off(void) // TODO: add timeout
 static void sys_system_reboot(void) // TODO: add timeout
 {
 	LOG_INF("System reboot requested");
+
+	/* Ensure SREQ source is tagged for diagnostics.
+	 * If a caller already set a specific source, preserve it.
+	 * Otherwise mark as uncategorized immediate reboot. */
+	if (retained && retained->last_reset_info.magic == LAST_RESET_INFO_MAGIC) {
+		if (retained->last_reset_info.sreq_source == SREQ_SRC_UNKNOWN) {
+			retained->last_reset_info.sreq_source = SREQ_SRC_POWER_IMMEDIATE;
+		}
+	}
+
 	configure_system_off(); // Common subsystem shutdown and prepare sense pins
 	sensor_calibration_online_mag_cold_start();
 #if CONFIG_SENSOR_USE_TCAL
