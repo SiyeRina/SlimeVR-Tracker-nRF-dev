@@ -487,8 +487,12 @@ static void print_lastreset(void)
 		if (rr & (1U << 1))  printk("  [DOG]    Watchdog reset\n");
 		if (rr & (1U << 2)) {
 			uint8_t src = retained->last_reset_info.sreq_source;
-			const char *name = (src < SREQ_SRC_COUNT) ? sreq_names[src] : "invalid";
-			printk("  [SREQ]   Software requested reset (src: %s [%u])\n", name, src);
+			if (retained->last_reset_info.sreq_flags & SREQ_FLAG_DETECTED) {
+				printk("  [SREQ]   Software requested reset (likely Zephyr fatal error)\n");
+			} else {
+				const char *name = (src < SREQ_SRC_COUNT) ? sreq_names[src] : "invalid";
+				printk("  [SREQ]   Software requested reset (src: %s [%u])\n", name, src);
+			}
 		}
 		if (rr & (1U << 3))  printk("  [LOCKUP] CPU lockup reset\n");
 		if (rr & (1U << 4))  printk("  [OFF]    Wake from system OFF mode\n");

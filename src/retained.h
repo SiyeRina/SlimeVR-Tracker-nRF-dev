@@ -143,11 +143,15 @@ struct retained_data {
 		uint32_t resetreas;            // RESETREAS register value from last reset
 		uint8_t  reboot_counter;       // reboot_counter at time of last reset
 		uint8_t  sreq_source;          // Source of last SREQ (if RESETREAS has SREQ bit)
-		uint16_t reserved2;
+		uint16_t sreq_flags;           // Flags: bit0=tagged by app, bit1=auto-detected by WDT
 		uint32_t total_resets;         // Monotonically increasing reset counter
 		uint32_t magic;                // Magic number to validate
 	} last_reset_info;
 };
+
+/* sreq_flags bit definitions */
+#define SREQ_FLAG_TAGGED    (1U << 0)  /* lastreset_tag_sreq_source() was called */
+#define SREQ_FLAG_DETECTED  (1U << 1)  /* watchdog_early_check auto-detected untagged SREQ */
 
 /* Magic number to validate watchdog state */
 #define WATCHDOG_STATE_MAGIC 0x57445447  /* "WDTG" in ASCII */

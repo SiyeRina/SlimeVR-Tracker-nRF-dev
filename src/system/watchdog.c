@@ -240,6 +240,15 @@ static int watchdog_early_check(void)
 	retained->last_reset_info.resetreas = saved_resetreas;
 	retained->last_reset_info.reboot_counter = retained->reboot_counter;
 
+	/* Detect untagged SREQ: Zephyr fatal errors bypass sys_system_reboot(),
+	 * so sreq_flags won't have SREQ_FLAG_TAGGED from any caller. */
+	uint16_t prev_sreq_flags = retained->last_reset_info.sreq_flags;
+	retained->last_reset_info.sreq_flags = 0;
+	if ((saved_resetreas & (1U << 2)) && !(prev_sreq_flags & SREQ_FLAG_TAGGED)) {
+		retained->last_reset_info.sreq_source = SREQ_SRC_POWER_IMMEDIATE;
+		retained->last_reset_info.sreq_flags = SREQ_FLAG_DETECTED;
+	}
+
 	/* Check if last reset was caused by watchdog - save for later use */
 	last_reset_was_wdt = watchdog_caused_reset();
 

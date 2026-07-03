@@ -19,6 +19,7 @@ static inline void lastreset_tag_sreq_source(enum sreq_source src)
 	extern struct retained_data *retained;
 	if (retained->last_reset_info.magic == LAST_RESET_INFO_MAGIC) {
 		retained->last_reset_info.sreq_source = (uint8_t)src;
+		retained->last_reset_info.sreq_flags = SREQ_FLAG_TAGGED;
 	}
 }
 

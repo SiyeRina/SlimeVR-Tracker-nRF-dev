@@ -468,8 +468,9 @@ static void sys_system_reboot(void) // TODO: add timeout
 	 * If a caller already set a specific source, preserve it.
 	 * Otherwise mark as uncategorized immediate reboot. */
 	if (retained && retained->last_reset_info.magic == LAST_RESET_INFO_MAGIC) {
-		if (retained->last_reset_info.sreq_source == SREQ_SRC_UNKNOWN) {
+		if (!(retained->last_reset_info.sreq_flags & SREQ_FLAG_TAGGED)) {
 			retained->last_reset_info.sreq_source = SREQ_SRC_POWER_IMMEDIATE;
+			retained->last_reset_info.sreq_flags = SREQ_FLAG_TAGGED;
 		}
 	}
 
