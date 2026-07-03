@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2025 SlimeVR Contributors
  *
  * SPDX-License-Identifier: MIT
@@ -11,6 +11,7 @@
 
 #include "watchdog.h"
 #include "globals.h"
+#include "power.h"
 #include <zephyr/task_wdt/task_wdt.h>
 #include <zephyr/drivers/watchdog.h>
 #include <zephyr/device.h>
