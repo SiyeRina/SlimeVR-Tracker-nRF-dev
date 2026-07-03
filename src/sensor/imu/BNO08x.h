@@ -93,6 +93,7 @@ uint8_t bno08x_setup_WOM(void);
 void bno08x_get_quaternion(float q[4]);
 int bno08x_read_product_id(uint8_t *pid_low, uint8_t *pid_high);
 int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_register);
+int bno08x_hardware_reset(void);
 
 /* =========================================================================
  *  sensor_imu_t Instance

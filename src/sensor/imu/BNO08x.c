@@ -65,7 +65,7 @@ LOG_MODULE_REGISTER(BNO08X, LOG_LEVEL_INF);
 static const struct gpio_dt_spec bno_vcc = GPIO_DT_SPEC_GET(ZEPHYR_USER_NODE, vcc_gpios);
 #endif
 
-static int bno08x_hardware_reset(void)
+int bno08x_hardware_reset(void)
 {
 #if DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, vcc_gpios)
 	if (!device_is_ready(bno_vcc.port)) {

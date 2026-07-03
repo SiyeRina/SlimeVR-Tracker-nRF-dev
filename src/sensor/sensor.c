@@ -28,6 +28,7 @@
 #include "system/watchdog.h"
 #include "util.h"
 #include "connection/connection.h"
+#include "imu/BNO08x.h"
 #include "calibration.h"
 
 #include <math.h>
@@ -359,6 +360,10 @@ void sensor_scan_thread(void)
 	err = sensor_scan(); // IMUs discovery
 	if (err)
 	{
+		/* Power-cycle sensor VCC before retry - handles BNO08x firmware hangs
+		 * that cause the chip to stop responding to I2C entirely. */
+		bno08x_hardware_reset();
+
 		k_msleep(5);
 		LOG_INF("Retrying sensor detection");
 
