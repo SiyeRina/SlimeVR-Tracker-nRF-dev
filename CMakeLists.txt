@@ -141,11 +141,6 @@ endif()
 FILE(GLOB_RECURSE app_sources src/*.c)
 target_sources(app PRIVATE ${app_sources})
 
-# fatal_hook.c overrides k_sys_fatal_error_handler (Zephyr __weak symbol).
-# Must be compiled without LTO to avoid weak/strong symbol resolution
-# conflicts in sysbuild CI where LTO merges all translation units.
-set_source_files_properties(src/system/fatal_hook.c PROPERTIES COMPILE_FLAGS "-fno-lto")
-
 # NORDIC SDK APP END
 
 FILE(GLOB_RECURSE files vqf-c/src/*.c)

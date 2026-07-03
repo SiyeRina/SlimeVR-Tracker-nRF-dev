@@ -21,6 +21,9 @@
 #include <hal/nrf_twim.h>
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <zephyr/sys/__assert.h>
+#include <zephyr/fatal.h>
+#include <zephyr/fatal_types.h>
+#include <zephyr/sys/printk.h>
 #include <stdint.h>
 
 #include "power.h"
@@ -793,4 +796,34 @@ void assert_post_action(const char *file, unsigned int line)
 	k_panic();
 }
 #endif /* !CONFIG_ASSERT_NO_FILE_INFO */
+
+void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
+{
+	volatile uint32_t *scb_cfsr = (volatile uint32_t *)0xE000ED28u;
+	volatile uint32_t *scb_hfsr = (volatile uint32_t *)0xE000ED2Cu;
+	uint32_t cfsr = *scb_cfsr, hfsr = *scb_hfsr;
+
+	if (retained && retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC) {
+		retained->fatal_error_info.reason = reason;
+		retained->fatal_error_info.cfsr = cfsr;
+		retained->fatal_error_info.hfsr = hfsr;
+		if (esf != NULL) {
+			retained->fatal_error_info.pc = esf->basic.pc;
+			retained->fatal_error_info.lr = esf->basic.lr;
+		} else {
+			retained->fatal_error_info.pc = 0;
+			retained->fatal_error_info.lr = 0;
+		}
+	}
+
+	printk("\n*** ZEPHYR FATAL ERROR ***\nReason: %u\n", reason);
+	if (esf != NULL) {
+		printk("PC:    0x%08X\nLR:    0x%08X\n", esf->basic.pc, esf->basic.lr);
+	}
+	printk("CFSR:  0x%08X\nHFSR:  0x%08X\n", cfsr, hfsr);
+	for (volatile uint32_t d = 0; d < 2000000; d++) { __asm__ volatile("nop"); }
+
+	sys_arch_reboot(0);
+	CODE_UNREACHABLE;
+}
 
