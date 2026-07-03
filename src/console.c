@@ -445,6 +445,49 @@ static void print_battery_tracker(void)
 	sys_print_battery_tracker_debug();
 }
 
+static void print_lastreset(void)
+{
+	printk("\n=== Last Reset Diagnostics ===\n");
+
+	if (retained->last_reset_info.magic != LAST_RESET_INFO_MAGIC) {
+		printk("No reset diagnostics available (cold boot or data invalid)\n");
+		printk("=========================\n\n");
+		return;
+	}
+
+	uint32_t rr = retained->last_reset_info.resetreas;
+	if (rr == 0) {
+		printk("RESETREAS: 0 (Power-on reset)\n");
+	} else {
+		printk("RESETREAS: 0x%08X\n", rr);
+		if (rr & (1U << 0))  printk("  [PIN]    Hardware pin reset\n");
+		if (rr & (1U << 1))  printk("  [DOG]    Watchdog reset\n");
+		if (rr & (1U << 2))  printk("  [SREQ]   Software requested reset\n");
+		if (rr & (1U << 3))  printk("  [LOCKUP] CPU lockup reset\n");
+		if (rr & (1U << 4))  printk("  [OFF]    Wake from system OFF mode\n");
+		if (rr & (1U << 16)) printk("  [DIF]    Debug interface reset\n");
+		if (rr & (1U << 18)) printk("  [NFC]    NFC field reset\n");
+		if (rr & (1U << 19)) printk("  [VBUS]   VBUS power reset\n");
+	}
+
+	printk("Reboot counter at reset: %u\n",
+	       retained->last_reset_info.reboot_counter);
+	printk("Total resets tracked:    %u\n",
+	       retained->last_reset_info.total_resets);
+
+	printk("Watchdog:\n");
+	printk("  Consecutive WDT resets: %u\n",
+	       retained->watchdog_state.reset_count);
+	printk("  Total WDT resets:       %u\n",
+	       retained->watchdog_state.total_wdt_resets);
+	printk("  Last failed channel:    %u (%s)\n",
+	       retained->watchdog_state.last_failed_channel,
+	       watchdog_get_channel_name(
+	           (wdt_channel_id_t)retained->watchdog_state.last_failed_channel));
+
+	printk("=========================\n\n");
+}
+
 static void print_meow(void)
 {
 	int64_t ticks = k_uptime_ticks();
@@ -511,6 +554,7 @@ static void print_help(void)
 	printk("  ping                       Flash LED (same as remote PING command)\n");
 	printk("  meow                       Meow!\n");
 	printk("  nvs                        Show NVS usage statistics\n");
+	printk("  lastreset                  Show last reset reason and statistics\n");
 	printk("  help                       Show this help message\n");
 	printk("  debug [duration]           Start sensor debug mode at FIFO rate (1-60s, default 1s)\n");
 	printk("  range                      Show sensor range statistics (min/max values)\n");
@@ -810,6 +854,7 @@ static void console_thread(void)
 	uint8_t command_ping[] = "ping";
 	uint8_t command_meow[] = "meow";
 	uint8_t command_nvs[] = "nvs";
+	uint8_t command_lastreset[] = "lastreset";
 
 #if CONFIG_SENSOR_USE_SENS_CALIBRATION
 	uint8_t command_sens[] = "sens";
@@ -1230,6 +1275,9 @@ static void console_thread(void)
 		}
 		else if (memcmp(line, command_nvs, sizeof(command_nvs)) == 0) {
 			sys_nvs_stats();
+		}
+		else if (memcmp(line, command_lastreset, sizeof(command_lastreset)) == 0) {
+			print_lastreset();
 		}
 		else if (memcmp(line, command_meow, sizeof(command_meow)) == 0) {
 			print_meow();

@@ -98,6 +98,9 @@ bool retained_validate(void)
 		retained->watchdog_state.total_wdt_resets = 0;
 		retained->watchdog_state.last_failed_channel = 0;
 		retained->watchdog_state.last_reset_uptime = 0;
+
+		/* Initialize last_reset_info magic (counters are zero from memset) */
+		retained->last_reset_info.magic = LAST_RESET_INFO_MAGIC;
 	}
 
 	/* Reset to accrue runtime from this session. */

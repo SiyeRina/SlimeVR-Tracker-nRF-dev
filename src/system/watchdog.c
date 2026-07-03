@@ -224,6 +224,18 @@ static int watchdog_early_check(void)
 		printk("\n=== RESET: Power-on reset (no prior reset reason) ===\n\n");
 	}
 
+	/* Save reset diagnostics to retained memory for later retrieval.
+	 * At PRE_KERNEL_1, retained->reboot_counter still holds the value
+	 * from before this boot (not yet incremented by main()). */
+	if (retained->last_reset_info.magic == LAST_RESET_INFO_MAGIC) {
+		retained->last_reset_info.total_resets++;
+	} else {
+		retained->last_reset_info.total_resets = 1;
+		retained->last_reset_info.magic = LAST_RESET_INFO_MAGIC;
+	}
+	retained->last_reset_info.resetreas = saved_resetreas;
+	retained->last_reset_info.reboot_counter = retained->reboot_counter;
+
 	/* Check if last reset was caused by watchdog - save for later use */
 	last_reset_was_wdt = watchdog_caused_reset();
 

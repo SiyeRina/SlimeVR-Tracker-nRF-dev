@@ -137,10 +137,22 @@ struct retained_data {
 		uint32_t total_wdt_resets;     // Cumulative WDT reset count (for debugging)
 		uint32_t magic;                // Magic number to validate watchdog state
 	} watchdog_state;
+
+	// Last reset diagnostics (persists across all reset types, outside CRC)
+	struct {
+		uint32_t resetreas;            // RESETREAS register value from last reset
+		uint8_t  reboot_counter;       // reboot_counter at time of last reset
+		uint8_t  reserved[3];
+		uint32_t total_resets;         // Monotonically increasing reset counter
+		uint32_t magic;                // Magic number to validate
+	} last_reset_info;
 };
 
 /* Magic number to validate watchdog state */
 #define WATCHDOG_STATE_MAGIC 0x57445447  /* "WDTG" in ASCII */
+
+/* Magic number to validate last_reset_info */
+#define LAST_RESET_INFO_MAGIC 0x4C525354  /* "LRST" in ASCII */
 
 /* Up to 4 KB of retained data allowed right now.
  */
