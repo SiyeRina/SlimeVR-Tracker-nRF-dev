@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2025 SlimeVR Contributors
  *
  * SPDX-License-Identifier: MIT
@@ -160,13 +160,16 @@ static void enter_dfu_mode(void)
 	/* Adafruit bootloader: Set GPREGRET to enter UF2 DFU mode */
 	NRF_POWER->GPREGRET = ADAFRUIT_DFU_MAGIC;
 	k_msleep(100);
+	lastreset_tag_sreq_source(SREQ_SRC_WDT_DFU_ENTER);
 	sys_reboot(SYS_REBOOT_COLD);
 #elif CONFIG_BOARD_HAS_NRF5_BOOTLOADER
 	/* nRF5 SDK bootloader - implementation depends on specific bootloader */
+	lastreset_tag_sreq_source(SREQ_SRC_WDT_DFU_ENTER);
 	sys_reboot(SYS_REBOOT_COLD);
 #else
 	/* No bootloader available, perform cold reboot */
 	LOG_ERR("No bootloader available, performing cold reboot");
+	lastreset_tag_sreq_source(SREQ_SRC_WDT_DFU_ENTER);
 	sys_reboot(SYS_REBOOT_COLD);
 #endif
 }

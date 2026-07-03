@@ -142,7 +142,8 @@ struct retained_data {
 	struct {
 		uint32_t resetreas;            // RESETREAS register value from last reset
 		uint8_t  reboot_counter;       // reboot_counter at time of last reset
-		uint8_t  reserved[3];
+		uint8_t  sreq_source;          // Source of last SREQ (if RESETREAS has SREQ bit)
+		uint16_t reserved2;
 		uint32_t total_resets;         // Monotonically increasing reset counter
 		uint32_t magic;                // Magic number to validate
 	} last_reset_info;
@@ -153,6 +154,30 @@ struct retained_data {
 
 /* Magic number to validate last_reset_info */
 #define LAST_RESET_INFO_MAGIC 0x4C525354  /* "LRST" in ASCII */
+
+/* Sources for software-requested resets (SREQ) */
+enum sreq_source {
+	SREQ_SRC_UNKNOWN = 0,          /* untagged (legacy / cold boot) */
+	SREQ_SRC_CONSOLE_REBOOT,       /* console.c "reboot" command */
+	SREQ_SRC_CONSOLE_SENS_RESET,   /* console.c "sens reset" */
+	SREQ_SRC_CONSOLE_DFU_CMD,      /* console.c dfu commands */
+	SREQ_SRC_WDT_DFU_ENTER,        /* watchdog.c DFU threshold exceeded */
+	SREQ_SRC_SENSOR_INIT_FAIL,     /* sensor.c sensor init failure */
+	SREQ_SRC_SENSOR_MAG_TOGGLE,    /* sensor.c mag enable/disable reboot */
+	SREQ_SRC_SENSOR_PKT_ERR,       /* sensor.c packet error threshold */
+	SREQ_SRC_ESB_REMOTE_REBOOT,    /* esb.c remote REBOOT command */
+	SREQ_SRC_ESB_REMOTE_DFU,       /* esb.c remote DFU command */
+	SREQ_SRC_ESB_REMOTE_DFU_OTA,   /* esb.c remote DFU_OTA command */
+	SREQ_SRC_BTN_SINGLE_CLICK,     /* system.c button single click */
+	SREQ_SRC_USER_SHUTDOWN_ALT,    /* system.c user_shutdown fallback to reboot */
+	SREQ_SRC_SYSTEM_DFU_UF2,       /* system.c DFU UF2 mode */
+	SREQ_SRC_SYSTEM_DFU_OTA,       /* system.c DFU OTA mode */
+	SREQ_SRC_POWER_IMMEDIATE,      /* power.c immediate reboot request */
+	SREQ_SRC_ESB_OTA_COMPLETE,     /* esb_ota.c OTA complete */
+	SREQ_SRC_ESB_OTA_DFU,          /* esb_ota.c DFU entry */
+	SREQ_SRC_ESB_OTA_FAIL,         /* esb_ota.c OTA failure */
+	SREQ_SRC_COUNT
+};
 
 /* Up to 4 KB of retained data allowed right now.
  */

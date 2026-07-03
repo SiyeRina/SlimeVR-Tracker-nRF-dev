@@ -1,4 +1,4 @@
-/*
+﻿/*
 	SlimeVR Code is placed under the MIT license
 	Copyright (c) 2025 SlimeVR Contributors
 
@@ -817,6 +817,7 @@ void sensor_set_mag_enabled(bool enabled)
 	sys_write(MAG_ENABLED_ID, &retained->mag_enabled, &val, sizeof(val));
 	// Tell sensor_retained_write() to invalidate fusion instead of saving it
 	skip_fusion_save = true;
+	lastreset_tag_sreq_source(SREQ_SRC_SENSOR_MAG_TOGGLE);
 	sys_request_system_reboot(false);
 }
 
@@ -1891,6 +1892,7 @@ void sensor_loop(void)
 					if (packets)
 					{
 						sensor_retained_write(); // keep the fusion state
+						lastreset_tag_sreq_source(SREQ_SRC_SENSOR_PKT_ERR);
 						sys_request_system_reboot(false);
 					}
 				}

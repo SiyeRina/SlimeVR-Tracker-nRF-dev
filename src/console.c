@@ -456,6 +456,28 @@ static void print_lastreset(void)
 		return;
 	}
 
+	static const char *sreq_names[] = {
+		[SREQ_SRC_UNKNOWN]          = "unknown (untagged)",
+		[SREQ_SRC_CONSOLE_REBOOT]   = "console: reboot cmd",
+		[SREQ_SRC_CONSOLE_SENS_RESET] = "console: sens reset",
+		[SREQ_SRC_CONSOLE_DFU_CMD]  = "console: dfu cmd",
+		[SREQ_SRC_WDT_DFU_ENTER]    = "watchdog: DFU threshold",
+		[SREQ_SRC_SENSOR_INIT_FAIL] = "sensor: init failure",
+		[SREQ_SRC_SENSOR_MAG_TOGGLE] = "sensor: mag toggle",
+		[SREQ_SRC_SENSOR_PKT_ERR]   = "sensor: packet errors",
+		[SREQ_SRC_ESB_REMOTE_REBOOT] = "esb: remote reboot",
+		[SREQ_SRC_ESB_REMOTE_DFU]   = "esb: remote DFU",
+		[SREQ_SRC_ESB_REMOTE_DFU_OTA] = "esb: remote DFU_OTA",
+		[SREQ_SRC_BTN_SINGLE_CLICK] = "system: button click",
+		[SREQ_SRC_USER_SHUTDOWN_ALT] = "system: shutdown alt",
+		[SREQ_SRC_SYSTEM_DFU_UF2]   = "system: DFU UF2",
+		[SREQ_SRC_SYSTEM_DFU_OTA]   = "system: DFU OTA",
+		[SREQ_SRC_POWER_IMMEDIATE]  = "power: immediate",
+		[SREQ_SRC_ESB_OTA_COMPLETE] = "esb_ota: complete",
+		[SREQ_SRC_ESB_OTA_DFU]      = "esb_ota: DFU enter",
+		[SREQ_SRC_ESB_OTA_FAIL]     = "esb_ota: failure",
+	};
+
 	uint32_t rr = retained->last_reset_info.resetreas;
 	if (rr == 0) {
 		printk("RESETREAS: 0 (Power-on reset)\n");
@@ -463,7 +485,11 @@ static void print_lastreset(void)
 		printk("RESETREAS: 0x%08X\n", rr);
 		if (rr & (1U << 0))  printk("  [PIN]    Hardware pin reset\n");
 		if (rr & (1U << 1))  printk("  [DOG]    Watchdog reset\n");
-		if (rr & (1U << 2))  printk("  [SREQ]   Software requested reset\n");
+		if (rr & (1U << 2)) {
+			uint8_t src = retained->last_reset_info.sreq_source;
+			const char *name = (src < SREQ_SRC_COUNT) ? sreq_names[src] : "invalid";
+			printk("  [SREQ]   Software requested reset (src: %s [%u])\n", name, src);
+		}
 		if (rr & (1U << 3))  printk("  [LOCKUP] CPU lockup reset\n");
 		if (rr & (1U << 4))  printk("  [OFF]    Wake from system OFF mode\n");
 		if (rr & (1U << 16)) printk("  [DIF]    Debug interface reset\n");
@@ -782,6 +808,7 @@ static void console_thread(void)
 	{
 #if ADAFRUIT_BOOTLOADER
 		NRF_POWER->GPREGRET = ADAFRUIT_DFU_MAGIC_UF2_RESET;
+		lastreset_tag_sreq_source(SREQ_SRC_CONSOLE_REBOOT);
 		sys_request_system_reboot(false);
 #endif
 #if NRF5_BOOTLOADER
@@ -910,6 +937,7 @@ static void console_thread(void)
 		} else if (memcmp(line, command_shutdown, sizeof(command_shutdown)) == 0) {
 			cmd_shutdown();
 		} else if (memcmp(line, command_reboot, sizeof(command_reboot)) == 0) {
+			lastreset_tag_sreq_source(SREQ_SRC_CONSOLE_SENS_RESET);
 			sys_request_system_reboot(false);
 		} else if (memcmp(line, command_battery, sizeof(command_battery)) == 0) {
 			print_battery_tracker();
@@ -1264,6 +1292,7 @@ static void console_thread(void)
 			}
 
 			k_msleep(100); // Wait for GPREGRET to be written
+			lastreset_tag_sreq_source(SREQ_SRC_CONSOLE_DFU_CMD);
 			sys_request_system_reboot(false);
 #endif
 #if NRF5_BOOTLOADER

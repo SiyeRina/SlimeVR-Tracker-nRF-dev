@@ -1,4 +1,4 @@
-/*
+﻿/*
 	SlimeVR Code is placed under the MIT license
 	Copyright (c) 2025 SlimeVR Contributors
 
@@ -1776,6 +1776,7 @@ static void esb_thread(void)
 
 				case ESB_PONG_FLAG_REBOOT:
 					LOG_WRN("Executing remote command: REBOOT");
+					lastreset_tag_sreq_source(SREQ_SRC_ESB_REMOTE_REBOOT);
 					sys_request_system_reboot(false);
 					break;
 
@@ -1791,6 +1792,7 @@ static void esb_thread(void)
 					NRF_POWER->GPREGRET = ADAFRUIT_DFU_MAGIC_UF2_RESET;
 					k_msleep(100);
 #endif
+					lastreset_tag_sreq_source(SREQ_SRC_ESB_REMOTE_DFU);
 					sys_request_system_reboot(false);
 #else
 					LOG_WRN("Remote command: DFU not supported (no bootloader)");
@@ -1804,6 +1806,7 @@ static void esb_thread(void)
 					NRF_POWER->GPREGRET = ADAFRUIT_DFU_MAGIC_OTA_RESET;
 					k_msleep(2);
 #endif
+					lastreset_tag_sreq_source(SREQ_SRC_ESB_REMOTE_DFU_OTA);
 					sys_request_system_reboot(false);
 #else
 					LOG_WRN("Remote command: DFU_OTA not supported (no bootloader)");

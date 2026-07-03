@@ -1,4 +1,4 @@
-#include "globals.h"
+﻿#include "globals.h"
 #include "test_mode.h"
 #include "sensor/sensor.h"
 #include "sensor/calibration.h"
@@ -460,6 +460,7 @@ static void button_thread(void)
 				if (test_mode_get()) {
 					LOG_INF("Button reboot blocked by test mode");
 				} else {
+					lastreset_tag_sreq_source(SREQ_SRC_BTN_SINGLE_CLICK);
 					sys_request_system_reboot(false);
 				}
 			}
@@ -584,6 +585,7 @@ int sys_user_shutdown(void)
 #if USER_SHUTDOWN_ENABLED
 	sys_request_system_off(false);
 #else
+	lastreset_tag_sreq_source(SREQ_SRC_USER_SHUTDOWN_ALT);
 	sys_request_system_reboot(false);
 #endif
 	return 0;
@@ -622,6 +624,7 @@ void sys_reset_mode(uint8_t mode)
 		LOG_INF("DFU requested");
 #if ADAFRUIT_BOOTLOADER
 		NRF_POWER->GPREGRET = ADAFRUIT_DFU_MAGIC_UF2_RESET;
+		lastreset_tag_sreq_source(SREQ_SRC_SYSTEM_DFU_UF2);
 		sys_request_system_reboot(false);
 #endif
 #if NRF5_BOOTLOADER
@@ -633,6 +636,7 @@ void sys_reset_mode(uint8_t mode)
 		LOG_INF("DFU OTA requested");
 #if ADAFRUIT_BOOTLOADER
 		NRF_POWER->GPREGRET = ADAFRUIT_DFU_MAGIC_OTA_RESET;
+		lastreset_tag_sreq_source(SREQ_SRC_SYSTEM_DFU_OTA);
 		sys_request_system_reboot(false);
 #endif
 #if NRF5_BOOTLOADER

@@ -1,4 +1,4 @@
-/*
+﻿/*
 	SlimeVR Code is placed under the MIT license
 	Copyright (c) 2025 SlimeVR Contributors
 
@@ -580,6 +580,7 @@ int esb_ota_handle_activate(void)
 	ota_write_first_page_and_reset();
 
 	/* If first page wasn't deferred, just reboot */
+	lastreset_tag_sreq_source(SREQ_SRC_ESB_OTA_COMPLETE);
 	sys_request_system_reboot(false);
 
 	/* Should not reach here */
@@ -613,6 +614,7 @@ void esb_ota_handle_abort(void)
 #if CONFIG_BUILD_OUTPUT_UF2
 	NRF_POWER->GPREGRET = ADAFRUIT_DFU_MAGIC_UF2_RESET;
 #endif
+	lastreset_tag_sreq_source(SREQ_SRC_ESB_OTA_DFU);
 	sys_request_system_reboot(false);
 }
 
@@ -633,6 +635,7 @@ void esb_ota_check_timeout(void)
 #if CONFIG_BUILD_OUTPUT_UF2
 		NRF_POWER->GPREGRET = ADAFRUIT_DFU_MAGIC_UF2_RESET;
 #endif
+		lastreset_tag_sreq_source(SREQ_SRC_ESB_OTA_FAIL);
 		sys_request_system_reboot(false);
 	}
 }
