@@ -506,6 +506,25 @@ static void print_lastreset(void)
 	printk("Total resets tracked:    %u\n",
 	       retained->last_reset_info.total_resets);
 
+	/* Display Zephyr fatal error details if available */
+	if (retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC) {
+		static const char *fatal_names[] = {
+			[0] = "CPU exception",
+			[1] = "Spurious interrupt",
+			[2] = "Stack overflow",
+			[3] = "Kernel oops",
+			[4] = "Kernel panic (assertion failure)",
+		};
+		uint32_t freason = retained->fatal_error_info.reason;
+		const char *fname = (freason < ARRAY_SIZE(fatal_names))
+			? fatal_names[freason] : "Arch-specific fault";
+		printk("\nLast Zephyr fatal error:\n");
+		printk("  Reason: %u (%s)\n", freason, fname);
+		if (retained->fatal_error_info.pc != 0) {
+			printk("  PC:     0x%08X\n", retained->fatal_error_info.pc);
+		}
+	}
+
 	printk("Watchdog:\n");
 	printk("  Consecutive WDT resets: %u\n",
 	       retained->watchdog_state.reset_count);

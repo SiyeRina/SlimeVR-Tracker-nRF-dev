@@ -147,6 +147,13 @@ struct retained_data {
 		uint32_t total_resets;         // Monotonically increasing reset counter
 		uint32_t magic;                // Magic number to validate
 	} last_reset_info;
+
+	// Zephyr fatal error diagnostics (persists across resets, outside CRC)
+	struct {
+		uint32_t reason;               // k_sys_fatal_error_handler reason code
+		uint32_t pc;                   // Program counter at fault (0 if unavailable)
+		uint32_t magic;                // Magic number to validate
+	} fatal_error_info;
 };
 
 /* sreq_flags bit definitions */
@@ -158,6 +165,9 @@ struct retained_data {
 
 /* Magic number to validate last_reset_info */
 #define LAST_RESET_INFO_MAGIC 0x4C525354  /* "LRST" in ASCII */
+
+/* Magic number to validate fatal_error_info */
+#define FATAL_ERROR_INFO_MAGIC 0x4641544C  /* "FATL" in ASCII */
 
 /* Sources for software-requested resets (SREQ) */
 enum sreq_source {
