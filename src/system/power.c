@@ -781,6 +781,7 @@ static void power_thread(void)
  * to retained RAM before the system reboots. This survives across resets
  * and can be read by the 'lastreset' console command.
  */
+#ifndef CONFIG_ASSERT_NO_FILE_INFO
 void assert_post_action(const char *file, unsigned int line)
 {
 	/* Save assertion location to retained RAM for post-reset diagnostics */
@@ -791,9 +792,5 @@ void assert_post_action(const char *file, unsigned int line)
 
 	k_panic();
 }
+#endif /* !CONFIG_ASSERT_NO_FILE_INFO */
 
-/* No-file-info variant (fallback when CONFIG_ASSERT_NO_FILE_INFO=y) */
-void assert_post_action(void)
-{
-	k_panic();
-}

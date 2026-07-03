@@ -12,6 +12,7 @@
 #include "watchdog.h"
 #include "globals.h"
 #include "power.h"
+#include "system.h"
 #include <zephyr/task_wdt/task_wdt.h>
 #include <zephyr/drivers/watchdog.h>
 #include <zephyr/device.h>
