@@ -818,9 +818,12 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 			retained->fatal_error_info.pc = 0;
 			retained->fatal_error_info.lr = 0;
 		}
-		if (thread != NULL) {
-			const char *name = k_thread_name_get(thread);
-			const char *safe = name ? name : "(null)";
+		{
+			const char *name = NULL;
+			if (thread != NULL) {
+				name = k_thread_name_get(thread);
+			}
+			const char *safe = name ? name : (thread ? "(unnamed)" : "(k_current_get==NULL)");
 			size_t safe_len = strlen(safe);
 			size_t copy = safe_len < 15 ? safe_len : 14;
 			memcpy(retained->fatal_error_info.thread_name, safe, copy);
