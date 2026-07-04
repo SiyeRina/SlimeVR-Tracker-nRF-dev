@@ -564,8 +564,10 @@ static void print_lastreset(void)
 			extern struct k_thread power_thread_id;
 			extern struct k_thread sensor_init_thread_id;
 			extern struct k_thread calibration_thread_id;
-			extern struct k_thread button_thread_id;
-			extern struct k_thread status_thread_id;
+			#if DT_NODE_HAS_PROP(DT_ALIAS(sw0), gpios)
+		extern struct k_thread button_thread_id;
+#endif
+		extern struct k_thread status_thread_id;
 			extern struct k_thread led_thread_id;
 			extern struct k_thread usb_init_thread_id;
 			extern struct k_thread disable_DFU_thread_id;
@@ -576,8 +578,10 @@ static void print_lastreset(void)
 			printk("    power:        %p\n", &power_thread_id);
 			printk("    sensor_init:  %p\n", &sensor_init_thread_id);
 			printk("    calibration:  %p\n", &calibration_thread_id);
-			printk("    button:       %p\n", &button_thread_id);
-			printk("    status:       %p\n", &status_thread_id);
+#if DT_NODE_HAS_PROP(DT_ALIAS(sw0), gpios)
+		printk("    button:       %p\n", &button_thread_id);
+#endif
+		printk("    status:       %p\n", &status_thread_id);
 			printk("    led:          %p\n", &led_thread_id);
 			printk("    usb_init:     %p\n", &usb_init_thread_id);
 			printk("    disable_DFU:  %p\n", &disable_DFU_thread_id);
