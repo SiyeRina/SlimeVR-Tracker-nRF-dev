@@ -16,19 +16,6 @@
 #define USB_EXISTS (DT_NODE_HAS_STATUS(USB, okay) && CONFIG_UART_CONSOLE)
 #endif
 
-/* Thread objects for lastreset lookup table */
-extern struct k_thread console_thread_id;
-extern struct k_thread connection_thread_id;
-extern struct k_thread esb_thread_id;
-extern struct k_thread power_thread_id;
-extern struct k_thread sensor_init_thread_id;
-extern struct k_thread calibration_thread_id;
-extern struct k_thread button_thread_id;
-extern struct k_thread status_thread_id;
-extern struct k_thread led_thread_id;
-extern struct k_thread usb_init_thread_id;
-extern struct k_thread disable_DFU_thread_id;
-
 #if (USB_EXISTS || CONFIG_RTT_CONSOLE) && CONFIG_USE_SLIMENRF_CONSOLE
 
 #if USB_EXISTS
@@ -567,19 +554,34 @@ static void print_lastreset(void)
 			printk("  Thread: %s (k_current_get returned NULL)\n", code);
 		}
 
-		/* Thread address lookup table - match with Thread ID above */
-		printk("\n  Known thread addresses:\n");
-		printk("    console:      %p\n", &console_thread_id);
-		printk("    connection:   %p\n", &connection_thread_id);
-		printk("    esb:          %p\n", &esb_thread_id);
-		printk("    power:        %p\n", &power_thread_id);
-		printk("    sensor_init:  %p\n", &sensor_init_thread_id);
-		printk("    calibration:  %p\n", &calibration_thread_id);
-		printk("    button:       %p\n", &button_thread_id);
-		printk("    status:       %p\n", &status_thread_id);
-		printk("    led:          %p\n", &led_thread_id);
-		printk("    usb_init:     %p\n", &usb_init_thread_id);
-		printk("    disable_DFU:  %p\n", &disable_DFU_thread_id);
+		/* Thread address lookup table - match with Thread ID above.
+		 * Declare externs locally to avoid file-scope conflicts
+		 * (some thread IDs are static when USB_EXISTS is true).
+		 */
+		{
+			extern struct k_thread esb_thread_id;
+			extern struct k_thread connection_thread_id;
+			extern struct k_thread power_thread_id;
+			extern struct k_thread sensor_init_thread_id;
+			extern struct k_thread calibration_thread_id;
+			extern struct k_thread button_thread_id;
+			extern struct k_thread status_thread_id;
+			extern struct k_thread led_thread_id;
+			extern struct k_thread usb_init_thread_id;
+			extern struct k_thread disable_DFU_thread_id;
+
+			printk("\n  Known thread addresses:\n");
+			printk("    connection:   %p\n", &connection_thread_id);
+			printk("    esb:          %p\n", &esb_thread_id);
+			printk("    power:        %p\n", &power_thread_id);
+			printk("    sensor_init:  %p\n", &sensor_init_thread_id);
+			printk("    calibration:  %p\n", &calibration_thread_id);
+			printk("    button:       %p\n", &button_thread_id);
+			printk("    status:       %p\n", &status_thread_id);
+			printk("    led:          %p\n", &led_thread_id);
+			printk("    usb_init:     %p\n", &usb_init_thread_id);
+			printk("    disable_DFU:  %p\n", &disable_DFU_thread_id);
+		}
 	}
 
 	printk("Watchdog:\n");
