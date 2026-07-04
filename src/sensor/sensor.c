@@ -377,6 +377,43 @@ void sensor_scan_thread(void)
 //		return err;
 }
 
+/* Raw I2C bus scan: iterates all addresses (1-127) and logs which ACK.
+ * This is a diagnostic tool to verify the I2C bus is physically working. */
+static void i2c_bus_scan_raw(void)
+{
+#if SENSOR_IMU_EXISTS
+	const struct device *bus = sensor_imu_dev.bus;
+	struct i2c_dt_spec tmp_dev = { .bus = bus };
+	char buf[128] = {0};
+	int pos = 0;
+	int found = 0;
+
+	for (uint8_t addr = 1; addr < 128; addr++) {
+		tmp_dev.addr = addr;
+		/* Write 0 bytes to check for ACK */
+		int ret = i2c_write_dt(&tmp_dev, NULL, 0);
+		if (ret == 0) {
+			pos += snprintf(buf + pos, sizeof(buf) - pos,
+					"0x%02X ", addr);
+			found++;
+			if (pos > 100) {
+				LOG_INF("I2C scan: %s", buf);
+				buf[0] = '\0';
+				pos = 0;
+			}
+		}
+	}
+	if (pos > 0) {
+		LOG_INF("I2C scan: %s", buf);
+	}
+	if (found == 0) {
+		LOG_WRN("I2C scan: NO devices found on bus!");
+	} else {
+		LOG_INF("I2C scan: %d device(s) found", found);
+	}
+#endif
+}
+
 int sensor_scan(void)
 {
 	while (sensor_sensor_scanning)
@@ -396,6 +433,9 @@ int sensor_scan(void)
 
 	// Wait for sensors to power up and stabilize
 	k_msleep(50);
+
+	/* Diagnostic: raw I2C bus scan to verify physical bus connectivity */
+	i2c_bus_scan_raw();
 
 	int imu_id = -1;
 #if SENSOR_IMU_SPI_EXISTS
