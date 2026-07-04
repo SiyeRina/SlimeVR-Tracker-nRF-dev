@@ -278,6 +278,14 @@ static int watchdog_early_check(void)
 		retained->fatal_error_info.assert_line = 0;
 		retained->fatal_error_info.assert_file_addr = 0;
 	}
+	/* Diagnostic: show what the fatal handler left in thread_name */
+	printk("FATAL_EARLY: magic=0x%08X reason=%u pc=0x%08X lr=0x%08X thread_name='%s'\n",
+	       retained->fatal_error_info.magic,
+	       retained->fatal_error_info.reason,
+	       retained->fatal_error_info.pc,
+	       retained->fatal_error_info.lr,
+	       retained->fatal_error_info.thread_name);
+
 	/* Clear the fault registers so next boot doesn't see stale flags */
 	SCB_CFSR = SCB_CFSR; /* Write-back clears all sticky bits */
 	SCB_HFSR = SCB_HFSR;

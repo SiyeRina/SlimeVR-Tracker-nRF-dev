@@ -807,6 +807,13 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 
 	struct k_thread *thread = k_current_get();
 
+	/* Diagnostic: write canary BEFORE conditional block to check if
+	 * handler writes survive the reboot cycle.  "HNDL_RAN" = 8 chars.
+	 */
+	if (retained) {
+		memcpy(retained->fatal_error_info.thread_name, "HNDL_RAN", 9);
+	}
+
 	if (retained && retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC) {
 		retained->fatal_error_info.reason = reason;
 		retained->fatal_error_info.cfsr = cfsr;
@@ -823,11 +830,16 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 			if (thread != NULL) {
 				name = k_thread_name_get(thread);
 			}
-			const char *safe = name ? name : (thread ? "(unnamed)" : "(k_current_get==NULL)");
+			const char *safe = name ? name : (thread ? "(unnamed)" : "(cur=NULL)");
 			size_t safe_len = strlen(safe);
 			size_t copy = safe_len < 15 ? safe_len : 14;
 			memcpy(retained->fatal_error_info.thread_name, safe, copy);
 			retained->fatal_error_info.thread_name[copy] = '\0';
+		}
+	} else {
+		/* Handler ran but magic check failed: leave canary as-is but add marker */
+		if (retained) {
+			memcpy(retained->fatal_error_info.thread_name, "NO_MAGIC", 9);
 		}
 	}
 
