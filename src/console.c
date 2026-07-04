@@ -566,6 +566,20 @@ static void print_lastreset(void)
 			memcpy(code, &retained->fatal_error_info.assert_file_addr, 4);
 			printk("  Thread: %s (k_current_get returned NULL)\n", code);
 		}
+
+		/* Thread address lookup table - match with Thread ID above */
+		printk("\n  Known thread addresses:\n");
+		printk("    console:      %p\n", &console_thread_id);
+		printk("    connection:   %p\n", &connection_thread_id);
+		printk("    esb:          %p\n", &esb_thread_id);
+		printk("    power:        %p\n", &power_thread_id);
+		printk("    sensor_init:  %p\n", &sensor_init_thread_id);
+		printk("    calibration:  %p\n", &calibration_thread_id);
+		printk("    button:       %p\n", &button_thread_id);
+		printk("    status:       %p\n", &status_thread_id);
+		printk("    led:          %p\n", &led_thread_id);
+		printk("    usb_init:     %p\n", &usb_init_thread_id);
+		printk("    disable_DFU:  %p\n", &disable_DFU_thread_id);
 	}
 
 	printk("Watchdog:\n");
@@ -579,26 +593,6 @@ static void print_lastreset(void)
 	           (wdt_channel_id_t)retained->watchdog_state.last_failed_channel));
 
 	printk("=========================\n\n");
-
-	/* If last reset was a fatal error, print thread lookup table
-	 * so the user can match the Thread ID to a specific thread.
-	 * The ID is the k_thread struct pointer (e.g. 0x200029B8).
-	 */
-	if (freason != 0) {
-		printk("Thread lookup (match Thread ID above):\n");
-		printk("  console_thread_id:       %p\n", &console_thread_id);
-		printk("  connection_thread_id:    %p\n", &connection_thread_id);
-		printk("  esb_thread_id:           %p\n", &esb_thread_id);
-		printk("  power_thread_id:         %p\n", &power_thread_id);
-		printk("  sensor_init_thread_id:   %p\n", &sensor_init_thread_id);
-		printk("  calibration_thread_id:   %p\n", &calibration_thread_id);
-		printk("  button_thread_id:        %p\n", &button_thread_id);
-		printk("  status_thread_id:        %p\n", &status_thread_id);
-		printk("  led_thread_id:           %p\n", &led_thread_id);
-		printk("  usb_init_thread_id:      %p\n", &usb_init_thread_id);
-		printk("  disable_DFU_thread_id:   %p\n", &disable_DFU_thread_id);
-		printk("\n");
-	}
 }
 
 static void print_meow(void)
