@@ -75,7 +75,7 @@ int bno08x_hardware_reset(void)
 
 	LOG_INF("Power-cycling sensor VCC for hardware reset...");
 	gpio_pin_set_dt(&bno_vcc, 0);
-	k_msleep(100);
+	k_msleep(200);
 	gpio_pin_set_dt(&bno_vcc, 1);
 	k_msleep(50);
 	LOG_INF("Sensor VCC restored");

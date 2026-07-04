@@ -301,6 +301,14 @@ static int watchdog_early_check(void)
 		NRF_POWER->GPREGRET = 0;
 	}
 
+	/* If the previous boot ended in a fatal error, clear GPREGRET to
+	 * prevent the Adafruit bootloader's double-tap counter from
+	 * triggering unwanted DFU mode during a crash-reboot loop. */
+	if (retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC
+	    && retained->fatal_error_info.reason != 0) {
+		NRF_POWER->GPREGRET = 0;
+	}
+
 	/* Clear reset reason flags early to prevent other code from seeing stale values */
 #ifdef NRF_RESET
 	NRF_RESET->RESETREAS = NRF_RESET->RESETREAS;
