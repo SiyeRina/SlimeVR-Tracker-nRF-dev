@@ -539,6 +539,9 @@ static void print_lastreset(void)
 			       (const char *)(uintptr_t)retained->fatal_error_info.assert_file_addr,
 			       retained->fatal_error_info.assert_line);
 		}
+		if (retained->fatal_error_info.thread_name[0] != '\0') {
+			printk("  Thread: %s\n", retained->fatal_error_info.thread_name);
+		}
 	}
 
 	printk("Watchdog:\n");

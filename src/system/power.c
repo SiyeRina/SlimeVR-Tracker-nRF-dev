@@ -23,8 +23,10 @@
 #include <zephyr/sys/__assert.h>
 #include <zephyr/fatal.h>
 #include <zephyr/fatal_types.h>
+#include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "power.h"
 #include "clock_control.h"
@@ -803,6 +805,8 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 	volatile uint32_t *scb_hfsr = (volatile uint32_t *)0xE000ED2Cu;
 	uint32_t cfsr = *scb_cfsr, hfsr = *scb_hfsr;
 
+	struct k_thread *thread = k_current_get();
+
 	if (retained && retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC) {
 		retained->fatal_error_info.reason = reason;
 		retained->fatal_error_info.cfsr = cfsr;
@@ -814,6 +818,12 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 			retained->fatal_error_info.pc = 0;
 			retained->fatal_error_info.lr = 0;
 		}
+		if (thread != NULL) {
+			const char *name = k_thread_name_get(thread);
+			size_t name_len = name ? strlen(name) : 0;
+			memcpy(retained->fatal_error_info.thread_name, name ? name : "(null)", name_len < 15 ? name_len : 14);
+			retained->fatal_error_info.thread_name[name_len < 15 ? name_len : 14] = '\0';
+		}
 	}
 
 	printk("\n*** ZEPHYR FATAL ERROR ***\nReason: %u\n", reason);
@@ -821,6 +831,9 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 		printk("PC:    0x%08X\nLR:    0x%08X\n", esf->basic.pc, esf->basic.lr);
 	}
 	printk("CFSR:  0x%08X\nHFSR:  0x%08X\n", cfsr, hfsr);
+	printk("Thread: %s (id=%p)\n",
+	       thread ? (k_thread_name_get(thread) ? k_thread_name_get(thread) : "unnamed") : "NULL",
+	       thread);
 	for (volatile uint32_t d = 0; d < 2000000; d++) { __asm__ volatile("nop"); }
 
 	sys_arch_reboot(0);

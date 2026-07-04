@@ -157,6 +157,7 @@ struct retained_data {
 		uint32_t hfsr;                 // ARM HardFault Status Register
 		uint32_t assert_line;          // __LINE__ of failed assertion (0 if not an assert)
 		uint32_t assert_file_addr;     // Flash address of __FILE__ string (0 if not an assert)
+		char thread_name[16];          // Thread name that caused the fault
 		uint32_t magic;                // Magic number to validate
 	} fatal_error_info;
 };
