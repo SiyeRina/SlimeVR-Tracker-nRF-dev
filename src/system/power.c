@@ -820,9 +820,11 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 		}
 		if (thread != NULL) {
 			const char *name = k_thread_name_get(thread);
-			size_t name_len = name ? strlen(name) : 0;
-			memcpy(retained->fatal_error_info.thread_name, name ? name : "(null)", name_len < 15 ? name_len : 14);
-			retained->fatal_error_info.thread_name[name_len < 15 ? name_len : 14] = '\0';
+			const char *safe = name ? name : "(null)";
+			size_t safe_len = strlen(safe);
+			size_t copy = safe_len < 15 ? safe_len : 14;
+			memcpy(retained->fatal_error_info.thread_name, safe, copy);
+			retained->fatal_error_info.thread_name[copy] = '\0';
 		}
 	}
 
