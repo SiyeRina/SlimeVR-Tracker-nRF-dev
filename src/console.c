@@ -573,18 +573,18 @@ static void print_lastreset(void)
 			extern struct k_thread disable_DFU_thread_id;
 
 			printk("\n  Known thread addresses:\n");
-		printk("    connection:   0x%08X\n", (uint32_t)(uintptr_t)&connection_thread_id);
-		printk("    esb:          0x%08X\n", (uint32_t)(uintptr_t)&esb_thread_id);
-		printk("    power:        0x%08X\n", (uint32_t)(uintptr_t)&power_thread_id);
-		printk("    sensor_init:  0x%08X\n", (uint32_t)(uintptr_t)&sensor_init_thread_id);
-		printk("    calibration:  0x%08X\n", (uint32_t)(uintptr_t)&calibration_thread_id);
+		printk("    connection:   0x%08X\n", (uint32_t)(uintptr_t)connection_thread_id);
+		printk("    esb:          0x%08X\n", (uint32_t)(uintptr_t)esb_thread_id);
+		printk("    power:        0x%08X\n", (uint32_t)(uintptr_t)power_thread_id);
+		printk("    sensor_init:  0x%08X\n", (uint32_t)(uintptr_t)sensor_init_thread_id);
+		printk("    calibration:  0x%08X\n", (uint32_t)(uintptr_t)calibration_thread_id);
 #if DT_NODE_HAS_PROP(DT_ALIAS(sw0), gpios)
-		printk("    button:       0x%08X\n", (uint32_t)(uintptr_t)&button_thread_id);
+		printk("    button:       0x%08X\n", (uint32_t)(uintptr_t)button_thread_id);
 #endif
-		printk("    status:       0x%08X\n", (uint32_t)(uintptr_t)&status_thread_id);
-		printk("    led:          0x%08X\n", (uint32_t)(uintptr_t)&led_thread_id);
-		printk("    usb_init:     0x%08X\n", (uint32_t)(uintptr_t)&usb_init_thread_id);
-		printk("    disable_DFU:  0x%08X\n", (uint32_t)(uintptr_t)&disable_DFU_thread_id);
+		printk("    status:       0x%08X\n", (uint32_t)(uintptr_t)status_thread_id);
+		printk("    led:          0x%08X\n", (uint32_t)(uintptr_t)led_thread_id);
+		printk("    usb_init:     0x%08X\n", (uint32_t)(uintptr_t)usb_init_thread_id);
+		printk("    disable_DFU:  0x%08X\n", (uint32_t)(uintptr_t)disable_DFU_thread_id);
 		}
 	}
 
