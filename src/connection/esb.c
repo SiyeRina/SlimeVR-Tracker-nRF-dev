@@ -1,4 +1,4 @@
-﻿/*
+/*
 	SlimeVR Code is placed under the MIT license
 	Copyright (c) 2025 SlimeVR Contributors
 
@@ -94,7 +94,7 @@ static bool esb_paired = false;
 LOG_MODULE_REGISTER(esb_event, LOG_LEVEL_INF);
 
 static void esb_thread(void);
-K_THREAD_DEFINE(esb_thread_id, 1024, esb_thread, NULL, NULL, NULL, 6, 0, 0);
+K_THREAD_DEFINE(esb_thread_id, 2048, esb_thread, NULL, NULL, NULL, 6, 0, 0);
 static int64_t last_tx_time = 0;
 
 static uint32_t ping_success_streak = 0; // consecutive success counter
