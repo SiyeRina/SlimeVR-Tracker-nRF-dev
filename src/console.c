@@ -535,13 +535,23 @@ static void print_lastreset(void)
 			printk("  HFSR:   0x%08X\n", retained->fatal_error_info.hfsr);
 		}
 		if (retained->fatal_error_info.assert_line != 0) {
-			printk("  Assert: %s:%u\n",
-			       (const char *)(uintptr_t)retained->fatal_error_info.assert_file_addr,
-			       retained->fatal_error_info.assert_line);
-		}
-		/* Thread name stored as uint32_t[4] for reliable retained-RAM persistence */
-		if (retained->fatal_error_info.thread_name_u32[0] != 0) {
-			printk("  Thread: %s\n", (const char *)retained->fatal_error_info.thread_name_u32);
+			/* reason=4 is K_ERR_KERNEL_PANIC (assertion) → show as Assert */
+			if (freason == 4) {
+				printk("  Assert: %s:%u\n",
+				       (const char *)(uintptr_t)retained->fatal_error_info.assert_file_addr,
+				       retained->fatal_error_info.assert_line);
+			} else {
+				/* Non-assertion fatal error: assert fields hold thread diagnostics */
+				char name4[5] = {0};
+				memcpy(name4, &retained->fatal_error_info.assert_file_addr, 4);
+				printk("  Thread: %s (id=0x%08X)\n", name4,
+				       retained->fatal_error_info.assert_line);
+			}
+		} else if (retained->fatal_error_info.assert_file_addr != 0) {
+			/* thread ptr was NULL but we got a diagnostic code */
+			char code[5] = {0};
+			memcpy(code, &retained->fatal_error_info.assert_file_addr, 4);
+			printk("  Thread: %s (k_current_get returned NULL)\n", code);
 		}
 	}
 

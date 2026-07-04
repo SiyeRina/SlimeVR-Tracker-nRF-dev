@@ -807,17 +807,6 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 
 	struct k_thread *thread = k_current_get();
 
-	/* Diagnostic: write canary BEFORE conditional block to check if
-	 * handler writes survive the reboot cycle.  "HNDL_RAN" = 8 chars.
-	 * Stored as uint32_t[4] to avoid char[] persistence issues in retained RAM.
-	 */
-	if (retained) {
-		retained->fatal_error_info.thread_name_u32[0] = 0x4C444E48; /* "HNDL" */
-		retained->fatal_error_info.thread_name_u32[1] = 0x4E41525F; /* "_RAN" */
-		retained->fatal_error_info.thread_name_u32[2] = 0;
-		retained->fatal_error_info.thread_name_u32[3] = 0;
-	}
-
 	if (retained && retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC) {
 		retained->fatal_error_info.reason = reason;
 		retained->fatal_error_info.cfsr = cfsr;
@@ -829,24 +818,25 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 			retained->fatal_error_info.pc = 0;
 			retained->fatal_error_info.lr = 0;
 		}
-		{
-			const char *name = NULL;
-			if (thread != NULL) {
-				name = k_thread_name_get(thread);
+
+		/* Store thread info in assert_line/assert_file_addr fields
+		 * because thread_name_u32[] at the struct tail doesn't
+		 * survive the reset (LTO eliminates or memory boundary issue).
+		 * assert_line = thread pointer (for unique ID)
+		 * assert_file_addr = first 4 chars of thread name as uint32
+		 */
+		retained->fatal_error_info.assert_line = (uint32_t)(uintptr_t)thread;
+		if (thread != NULL) {
+			const char *name = k_thread_name_get(thread);
+			if (name) {
+				memcpy(&retained->fatal_error_info.assert_file_addr,
+				       name, strlen(name) < 4 ? strlen(name) : 4);
+			} else {
+				retained->fatal_error_info.assert_file_addr = 0x4E554E28; /* "(NUN" */
 			}
-			const char *safe = name ? name : (thread ? "(unnamed)" : "(cur=NULL)");
-			/* Copy up to 16 bytes into thread_name_u32[4] */
-			memset(retained->fatal_error_info.thread_name_u32, 0, sizeof(retained->fatal_error_info.thread_name_u32));
-			memcpy(retained->fatal_error_info.thread_name_u32, safe,
-			       strlen(safe) < 16 ? strlen(safe) : 15);
-		}
-	} else {
-		/* Handler ran but magic check failed - "NOMAG" = 5 chars */
-		if (retained) {
-			retained->fatal_error_info.thread_name_u32[0] = 0x4D414F4E; /* "NOAM" */
-			retained->fatal_error_info.thread_name_u32[1] = 0x00000047; /* "G\0\0\0" */
-			retained->fatal_error_info.thread_name_u32[2] = 0;
-			retained->fatal_error_info.thread_name_u32[3] = 0;
+		} else {
+			/* k_current_get returned NULL */
+			retained->fatal_error_info.assert_file_addr = 0x554C4C4E; /* "NULL" */
 		}
 	}
 
