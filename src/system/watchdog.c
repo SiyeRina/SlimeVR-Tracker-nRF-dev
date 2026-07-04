@@ -301,11 +301,12 @@ static int watchdog_early_check(void)
 		NRF_POWER->GPREGRET = 0;
 	}
 
-	/* If the previous boot ended in a fatal error, clear GPREGRET to
-	 * prevent the Adafruit bootloader's double-tap counter from
-	 * triggering unwanted DFU mode during a crash-reboot loop. */
-	if (retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC
-	    && retained->fatal_error_info.reason != 0) {
+	/* If the previous boot ended unexpectedly (fatal error or watchdog),
+	 * clear GPREGRET to prevent the Adafruit bootloader's double-tap
+	 * counter from triggering unwanted DFU mode during a crash loop. */
+	if ((retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC
+	     && retained->fatal_error_info.reason != 0)
+	    || last_reset_was_wdt) {
 		NRF_POWER->GPREGRET = 0;
 	}
 
