@@ -559,18 +559,18 @@ static void print_lastreset(void)
 		 * (some thread IDs are static when USB_EXISTS is true).
 		 */
 		{
-			extern struct k_thread esb_thread_id;
-			extern struct k_thread connection_thread_id;
-			extern struct k_thread power_thread_id;
-			extern struct k_thread sensor_init_thread_id;
-			extern struct k_thread calibration_thread_id;
+			extern struct k_thread *esb_thread_id;
+			extern struct k_thread *connection_thread_id;
+			extern struct k_thread *power_thread_id;
+			extern struct k_thread *sensor_init_thread_id;
+			extern struct k_thread *calibration_thread_id;
 			#if DT_NODE_HAS_PROP(DT_ALIAS(sw0), gpios)
-		extern struct k_thread button_thread_id;
+		extern struct k_thread *button_thread_id;
 #endif
-		extern struct k_thread status_thread_id;
-			extern struct k_thread led_thread_id;
-			extern struct k_thread usb_init_thread_id;
-			extern struct k_thread disable_DFU_thread_id;
+		extern struct k_thread *status_thread_id;
+			extern struct k_thread *led_thread_id;
+			extern struct k_thread *usb_init_thread_id;
+			extern struct k_thread *disable_DFU_thread_id;
 
 			printk("\n  Known thread addresses:\n");
 		printk("    connection:   0x%08X\n", (uint32_t)(uintptr_t)connection_thread_id);
