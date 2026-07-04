@@ -848,7 +848,18 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 	printk("Thread: %s (id=%p)\n",
 	       thread ? (k_thread_name_get(thread) ? k_thread_name_get(thread) : "unnamed") : "NULL",
 	       thread);
-	for (volatile uint32_t d = 0; d < 2000000; d++) { __asm__ volatile("nop"); }
+
+	/* Repeatedly print and delay to ensure USB serial output is visible
+	 * before the system reboots. Stack overflow is transient; the thread
+	 * name printed here is the definitive diagnostic.
+	 */
+	for (int i = 0; i < 20; i++) {
+		printk(">>> FATAL: reason=%u thread=%s (id=%p) >>>\n",
+		       reason,
+		       thread ? (k_thread_name_get(thread) ? k_thread_name_get(thread) : "unnamed") : "NULL",
+		       thread);
+		for (volatile uint32_t d = 0; d < 5000000; d++) { __asm__ volatile("nop"); }
+	}
 
 	sys_arch_reboot(0);
 	CODE_UNREACHABLE;
