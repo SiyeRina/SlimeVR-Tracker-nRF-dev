@@ -809,9 +809,13 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 
 	/* Diagnostic: write canary BEFORE conditional block to check if
 	 * handler writes survive the reboot cycle.  "HNDL_RAN" = 8 chars.
+	 * Stored as uint32_t[4] to avoid char[] persistence issues in retained RAM.
 	 */
 	if (retained) {
-		memcpy(retained->fatal_error_info.thread_name, "HNDL_RAN", 9);
+		retained->fatal_error_info.thread_name_u32[0] = 0x4C444E48; /* "HNDL" */
+		retained->fatal_error_info.thread_name_u32[1] = 0x4E41525F; /* "_RAN" */
+		retained->fatal_error_info.thread_name_u32[2] = 0;
+		retained->fatal_error_info.thread_name_u32[3] = 0;
 	}
 
 	if (retained && retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC) {
@@ -831,15 +835,18 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 				name = k_thread_name_get(thread);
 			}
 			const char *safe = name ? name : (thread ? "(unnamed)" : "(cur=NULL)");
-			size_t safe_len = strlen(safe);
-			size_t copy = safe_len < 15 ? safe_len : 14;
-			memcpy(retained->fatal_error_info.thread_name, safe, copy);
-			retained->fatal_error_info.thread_name[copy] = '\0';
+			/* Copy up to 16 bytes into thread_name_u32[4] */
+			memset(retained->fatal_error_info.thread_name_u32, 0, sizeof(retained->fatal_error_info.thread_name_u32));
+			memcpy(retained->fatal_error_info.thread_name_u32, safe,
+			       strlen(safe) < 16 ? strlen(safe) : 15);
 		}
 	} else {
-		/* Handler ran but magic check failed: leave canary as-is but add marker */
+		/* Handler ran but magic check failed - "NOMAG" = 5 chars */
 		if (retained) {
-			memcpy(retained->fatal_error_info.thread_name, "NO_MAGIC", 9);
+			retained->fatal_error_info.thread_name_u32[0] = 0x4D414F4E; /* "NOAM" */
+			retained->fatal_error_info.thread_name_u32[1] = 0x00000047; /* "G\0\0\0" */
+			retained->fatal_error_info.thread_name_u32[2] = 0;
+			retained->fatal_error_info.thread_name_u32[3] = 0;
 		}
 	}
 
