@@ -296,34 +296,14 @@ static int watchdog_early_check(void)
 
 	/* Save GPREGRET for OTA RAM engine debug (survives system reset) */
 	saved_gpregret = NRF_POWER->GPREGRET & 0xFF;
-	if (saved_gpregret >= 0xD0 && saved_gpregret <= 0xDE) {
-		/* Clear it so bootloader doesn't see it on next reset */
+
+		/* Unconditionally clear GPREGRET to prevent the Adafruit
+		 * bootloader's double-tap counter from entering DFU mode
+		 * during crash-reboot loops. Use the 'dfu' shell command
+		 * to enter DFU mode when needed. */
 		NRF_POWER->GPREGRET = 0;
-	}
 
-		/* Clear GPREGRET on unexpected resets to prevent the Adafruit
-		 * bootloader's double-tap counter from triggering unwanted DFU
-		 * mode during a crash loop. Covers: watchdog, fatal error,
-		 * software request, CPU lockup, and debug interface resets.
-		 * Does NOT clear on PIN reset (user may be double-tapping). */
-		{
-			bool unexpected = last_reset_was_wdt;
-			if (retained->fatal_error_info.magic == FATAL_ERROR_INFO_MAGIC
-			    && retained->fatal_error_info.reason != 0) {
-				unexpected = true;
-			}
-			/* SREQ: sys_reboot() after crash; LOCKUP: hard fault; DIF: debugger */
-			if (saved_resetreas & (POWER_RESETREAS_SREQ_Msk
-			                       | POWER_RESETREAS_LOCKUP_Msk
-			                       | POWER_RESETREAS_DIF_Msk)) {
-				unexpected = true;
-			}
-			if (unexpected) {
-				NRF_POWER->GPREGRET = 0;
-			}
-		}
-
-	/* Clear reset reason flags early to prevent other code from seeing stale values */
+		/* Clear reset reason flags early to prevent other code from seeing stale values */
 #ifdef NRF_RESET
 	NRF_RESET->RESETREAS = NRF_RESET->RESETREAS;
 #else
