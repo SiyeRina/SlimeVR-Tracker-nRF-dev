@@ -298,10 +298,16 @@ static int watchdog_early_check(void)
 	saved_gpregret = NRF_POWER->GPREGRET & 0xFF;
 
 		/* Unconditionally clear GPREGRET to prevent the Adafruit
-		 * bootloader's double-tap counter from entering DFU mode
-		 * during crash-reboot loops. Use the 'dfu' shell command
-		 * to enter DFU mode when needed. */
-		NRF_POWER->GPREGRET = 0;
+			 * bootloader's double-tap counter from entering DFU mode
+			 * during crash-reboot loops. Use the 'dfu' shell command
+			 * to enter DFU mode when needed. */
+			NRF_POWER->GPREGRET = 0;
+
+			/* Also clear the WDT reset counter to prevent the firmware's
+			 * own WDT DFU threshold from triggering during crash loops. */
+			if (retained->watchdog_state.magic == WATCHDOG_STATE_MAGIC) {
+				retained->watchdog_state.reset_count = 0;
+			}
 
 		/* Clear reset reason flags early to prevent other code from seeing stale values */
 #ifdef NRF_RESET
