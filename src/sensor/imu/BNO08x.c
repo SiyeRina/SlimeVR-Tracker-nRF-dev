@@ -379,25 +379,37 @@ retry:
 
 	    LOG_INF("Boot advertisement received (%u bytes)", payload_len);
 
-	    /* Drain any remaining packets that the BNO08x may have queued
-	     * after the boot advertisement (e.g. status messages). This
-	     * prevents the product ID read from picking up a stale packet. */
-	    {
-	        int64_t drain_start = k_uptime_get();
-	        while ((k_uptime_get() - drain_start) < 100) {
-	            uint8_t *dummy_payload;
-	            uint32_t dummy_len;
-	            uint8_t dummy_ch;
-	            if (shtp_recv(pkt_buf, &dummy_payload, &dummy_len, &dummy_ch) < 0)
-	                break;
-	        }
-	    }
+    /* Parse product ID from the boot advertisement's TLV entries.
+     * The advertisement contains the product ID as a TLV with tag
+     * 0xF8 — the same as the product ID response.  Extracting it
+     * here avoids a separate product ID request that can race with
+     * status packets the BNO08x sends after boot. */
+    uint8_t pid_l = 0, pid_h = 0;
+    bool pid_found = false;
+    {
+        uint32_t pos = 0;
+        while (pos + 1 < payload_len) {
+            uint8_t tag = payload[pos];
+            uint8_t rlen = payload[pos + 1];
+            if (pos + 2 + rlen > payload_len) break;
+            if (tag == 0xF8 && rlen >= 2) {
+                pid_l = payload[pos + 2];
+                pid_h = payload[pos + 3];
+                pid_found = true;
+                break;
+            }
+            pos += 2 + rlen;
+        }
+    }
 
-    /* Read product ID */
-    uint8_t pid_l, pid_h;
-    ret = bno08x_read_product_id(&pid_l, &pid_h);
-    if (ret < 0) {
-        LOG_ERR("Product ID verification failed");
+    if (!pid_found) {
+        LOG_ERR("Product ID not found in boot advertisement");
+        goto unlock;
+    }
+    uint16_t pid = ((uint16_t)pid_h << 8) | pid_l;
+    LOG_INF("Product ID: 0x%04X (from advertisement)", pid);
+    if (pid != BNO08X_PID_BNO085 && pid != BNO08X_PID_BNO086) {
+        LOG_ERR("Unsupported product ID 0x%04X", pid);
         goto unlock;
     }
 
