@@ -245,11 +245,13 @@ static int bno08x_set_report(uint8_t report_id, uint32_t interval_us)
         return err;
     }
 
-    /* Optional: wait for FEATURE_RESPONSE (0xFC) to confirm */
+    /* Wait for FEATURE_RESPONSE (0xFC) to confirm.
+     * BNO08x can take 50-200ms to process SET_FEATURE depending on
+     * SH-2 firmware version and sensor initialization state. */
     uint8_t buf[BNO08X_SHTP_MAX_PACKET];
     uint8_t *payload;
     uint32_t len;
-    err = shtp_wait_for_channel(buf, &payload, &len, BNO08X_SHTP_CH_CONTROL, 50);
+    err = shtp_wait_for_channel(buf, &payload, &len, BNO08X_SHTP_CH_CONTROL, 200);
     if (err == 0 && len >= 2 && payload[0] == BNO08X_CMD_FEATURE_RESPONSE) {
         /* success */
     } else {
@@ -379,6 +381,20 @@ retry:
 
 	    LOG_INF("Boot advertisement received (%u bytes)", payload_len);
 
+    /* Drain any stale packets the BNO08x may have queued after boot.
+     * SH-2 can send status/heartbeat packets on channel 0 right after
+     * the advertisement; consuming them now prevents interference with
+     * subsequent SET_FEATURE commands. */
+    {
+        int64_t drain_deadline = k_uptime_get() + 100;
+        while (k_uptime_get() < drain_deadline) {
+            uint8_t dbuf[BNO08X_SHTP_MAX_PACKET];
+            uint8_t *dp; uint32_t dl; uint8_t dc;
+            if (shtp_recv(dbuf, &dp, &dl, &dc) < 0) { k_msleep(10); continue; }
+            LOG_DBG("drain: ch=%u len=%u", dc, dl);
+        }
+    }
+
     /* Parse product ID from the boot advertisement's TLV entries.
      * The advertisement contains the product ID as a TLV with tag
      * 0xF8 — the same as the product ID response.  Extracting it
@@ -436,9 +452,10 @@ retry:
         LOG_WRN("Temperature report not available");
     }
 
-    /* Wait for first sensor report on channel 3 */
+    /* Wait for first sensor report on channel 3 (INPUT).
+     * May take longer now due to drain + extended feature response wait. */
     ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-                                BNO08X_SHTP_CH_INPUT, 300);
+                                BNO08X_SHTP_CH_INPUT, 1500);
     if (ret < 0) {
         LOG_WRN("No initial sensor report");
     }
