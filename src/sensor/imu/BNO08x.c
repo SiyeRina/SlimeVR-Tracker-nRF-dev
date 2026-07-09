@@ -239,11 +239,13 @@ static int bno08x_set_report(uint8_t report_id, uint32_t interval_us)
     cmd[7] = (uint8_t)((interval_us >> 16) & 0xFF);
     cmd[8] = (uint8_t)((interval_us >> 24) & 0xFF);
 
+    LOG_HEXDUMP_INF(cmd, sizeof(cmd), "SET_FEATURE 0x%02X cmd", report_id);
     int err = shtp_send(BNO08X_SHTP_CH_CONTROL, cmd, sizeof(cmd));
     if (err < 0) {
-        LOG_ERR("Failed to set report 0x%02X", report_id);
+        LOG_ERR("Failed to set report 0x%02X: %d", report_id, err);
         return err;
     }
+    LOG_INF("SET_FEATURE 0x%02X sent (%d bytes)", report_id, err);
 
     /* Wait for FEATURE_RESPONSE (0xFC) to confirm.
      * BNO08x can take 50-200ms to process SET_FEATURE depending on
@@ -253,11 +255,15 @@ static int bno08x_set_report(uint8_t report_id, uint32_t interval_us)
     uint32_t len;
     err = shtp_wait_for_channel(buf, &payload, &len, BNO08X_SHTP_CH_CONTROL, 200);
     if (err == 0 && len >= 2 && payload[0] == BNO08X_CMD_FEATURE_RESPONSE) {
-        /* success */
-    } else {
-        LOG_WRN("No feature response for report 0x%02X", report_id);
+        LOG_INF("FEATURE_RESPONSE for report 0x%02X: payload=%u bytes", report_id, len);
+        return 0;
     }
-    return 0;
+    if (err == 0) {
+        LOG_HEXDUMP_WRN(payload, len, "Unexpected CONTROL response (expected 0xFC)");
+    } else {
+        LOG_WRN("No feature response for report 0x%02X (err=%d)", report_id, err);
+    }
+    return -ETIMEDOUT;
 }
 
 /* =========================================================================
@@ -457,6 +463,8 @@ pid_request:
             if (!fast_path) {
                 /* Verify product ID matches advertisement */
             }
+            /* Short settle before switching to CONTROL channel */
+            k_msleep(20);
         } else {
             LOG_WRN("No product ID response");
         }
