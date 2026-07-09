@@ -529,6 +529,7 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
     /* We'll accumulate delay from consecutive reports within this call */
     uint32_t accumulated_delay_us = 0;
 
+    int64_t start = k_uptime_get();
     while (samples < max_samples) {
         uint8_t pkt_buf[BNO08X_SHTP_MAX_PACKET];
         uint8_t *payload;
@@ -546,7 +547,11 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
         if (channel != BNO08X_SHTP_CH_INPUT) {
             static int non_input;
             if (++non_input <= 3)
-                LOG_INF("skip ch=%u len=%u id=0x%02X", channel, payload_len, payload[0]);
+                LOG_INF("skip ch=%u len=%u id=0x%02X", channel, payload_len, payload_len > 0 ? payload[0] : 0);
+            /* Graceful timeout: if we get only heartbeats for >5ms, yield to sensor loop */
+            if (k_uptime_get() - start > 5) {
+                break;
+            }
             continue;
         }
 
