@@ -293,10 +293,10 @@ static void sensor_update_range_stats_gyro(float g[3]);
 static void sensor_update_range_stats_accel(float a[3]);
 #endif // CONFIG_SENSOR_RANGE_STATS
 static struct k_thread sensor_thread_id;
-static K_THREAD_STACK_DEFINE(sensor_thread_id_stack, 2048);
+static K_THREAD_STACK_DEFINE(sensor_thread_id_stack, 4096);
 
-K_THREAD_DEFINE(sensor_init_thread_id, 1024, sensor_request_scan, true, NULL, NULL, 7, 0, 0);
-// 256 was too small - stack overflow on nRF52840 during sensor init
+K_THREAD_DEFINE(sensor_init_thread_id, 2048, sensor_request_scan, true, NULL, NULL, 7, 0, 0);
+// 1024 was too small - stack overflow during BNO08x SH-2 init and sensor loop
 
 /* init thread handles starting scanner on the main thread, and then switches to the loop, before returning
    afterwards, other calls to start scanner will stop the loop on their thread and start the scanner on its own; it will also wait for the scanner to finish
