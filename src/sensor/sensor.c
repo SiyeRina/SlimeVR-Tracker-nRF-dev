@@ -404,24 +404,21 @@ int sensor_scan(void)
 		struct i2c_dt_spec tmp_dev = { .bus = bus };
 		uint8_t found = 0;
 
-		/* Check known BNO08x addresses first with detailed logging */
+		/* Check known BNO08x addresses with write-only probe.
+		 * BNO08x uses SHTP protocol where reads consume data; a read
+		 * probe here would steal the packet that bno08x_scan_probe
+		 * needs.  Use i2c_write_dt() instead — a write ACK confirms
+		 * the device is present without corrupting SHTP state. */
 		uint8_t chk_addrs[] = {0x4A, 0x4B};
 		for (int i = 0; i < ARRAY_SIZE(chk_addrs); i++) {
 			tmp_dev.addr = chk_addrs[i];
-			uint8_t dummy;
-			int ret = i2c_read_dt(&tmp_dev, &dummy, 1);
+			uint8_t dummy = 0;
+			int ret = i2c_write_dt(&tmp_dev, &dummy, 1);
 			if (ret == 0) {
-				LOG_INF("I2C scan: device at 0x%02X ACKs read", chk_addrs[i]);
+				LOG_INF("I2C scan: device at 0x%02X ACKs", chk_addrs[i]);
 				found++;
 			} else {
-				/* Try write probe as fallback */
-				ret = i2c_write_dt(&tmp_dev, &dummy, 1);
-				if (ret == 0) {
-					LOG_INF("I2C scan: device at 0x%02X ACKs write", chk_addrs[i]);
-					found++;
-				} else {
-					LOG_DBG("I2C scan: 0x%02X err=%d", chk_addrs[i], ret);
-				}
+				LOG_DBG("I2C scan: 0x%02X err=%d", chk_addrs[i], ret);
 			}
 		}
 

@@ -732,8 +732,16 @@ retry:
         if (saved_addr >= 8 && saved_addr <= 119 && saved_addr != addr)
             continue;
 
-        LOG_INF("BNO08x probe at 0x%02X", addr);
+        /* Quick write-only probe first — avoids consuming SHTP data
+         * that the passive listen needs. */
         tmp_dev.bus = bus; tmp_dev.addr = addr;
+        {
+            uint8_t dummy = 0;
+            if (i2c_write_dt(&tmp_dev, &dummy, 1) != 0)
+                continue; /* no device at this address, skip to next */
+        }
+
+        LOG_INF("BNO08x probe at 0x%02X", addr);
 
         /* Passive detection: just listen for SHTP traffic for up to
          * 1.2 seconds.  Any valid SHTP packet from 0x4A or 0x4B proves
