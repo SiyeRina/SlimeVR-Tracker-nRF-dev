@@ -470,6 +470,25 @@ pid_request:
         }
     }
 
+    /* Query feature support before enabling.
+     * SH-2 protocol requires GET_FEATURE_REQUEST handshake; skipping it
+     * can cause the BNO08x to ignore subsequent SET_FEATURE commands. */
+    {
+        uint8_t get_feat[] = {BNO08X_CMD_GET_FEATURE, BNO08X_REPORT_GAME_ROTATION_VECTOR};
+        ret = shtp_send(BNO08X_SHTP_CH_CONTROL, get_feat, sizeof(get_feat));
+        if (ret < 0) {
+            LOG_ERR("GET_FEATURE GRV send failed");
+            goto unlock;
+        }
+        ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
+                                    BNO08X_SHTP_CH_CONTROL, 300);
+        if (ret == 0 && payload_len >= 2 && payload[0] == BNO08X_CMD_FEATURE_RESPONSE) {
+            LOG_INF("GRV feature: flags=0x%02X len=%u", payload[1], payload_len);
+        } else {
+            LOG_WRN("No GET_FEATURE response for GRV");
+        }
+    }
+
     /* Compute GRV interval */
     float desired_odr = 1.0f / (accel_time < gyro_time ? accel_time : gyro_time);
     if (desired_odr < 1.0f) desired_odr = 1.0f;

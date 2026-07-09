@@ -52,6 +52,7 @@
  * ========================================================================= */
 #define BNO08X_CMD_PRODUCT_ID_REQUEST   0xF9
 #define BNO08X_CMD_PRODUCT_ID_RESPONSE  0xF8
+#define BNO08X_CMD_GET_FEATURE          0xFE
 #define BNO08X_CMD_SET_FEATURE          0xFD
 #define BNO08X_CMD_FEATURE_RESPONSE     0xFC
 #define BNO08X_CMD_RESET                0x01
