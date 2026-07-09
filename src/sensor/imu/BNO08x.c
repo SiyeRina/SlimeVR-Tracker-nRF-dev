@@ -429,6 +429,28 @@ retry:
         goto unlock;
     }
 
+    /* Send explicit Product ID Request — BNO08x requires this SH-2
+     * protocol handshake before it will accept SET_FEATURE commands.
+     * Even though we already know the product ID from the boot
+     * advertisement TLV, the chip tracks the protocol state and
+     * ignores feature commands until this exchange completes. */
+    {
+        uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
+        ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
+        if (ret < 0) {
+            LOG_ERR("Product ID request send failed");
+            goto unlock;
+        }
+        /* Wait for response — the chip may echo stored product data */
+        ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
+                                    BNO08X_SHTP_CH_COMMAND, 500);
+        if (ret == 0) {
+            LOG_INF("Product ID response received (%u bytes)", payload_len);
+        } else {
+            LOG_WRN("No product ID response");
+        }
+    }
+
     /* Compute GRV interval */
     float desired_odr = 1.0f / (accel_time < gyro_time ? accel_time : gyro_time);
     if (desired_odr < 1.0f) desired_odr = 1.0f;
