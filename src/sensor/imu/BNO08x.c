@@ -363,19 +363,35 @@ retry:
         goto unlock;
     }
     LOG_INF("RESET sent, waiting for reboot...");
-    k_msleep(300);
+	    k_msleep(300);
 
-    /* Wait for boot advertisement on channel 0 (up to 800 ms). */
-    ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-                                BNO08X_SHTP_CH_COMMAND, 800);
-    if (ret < 0) {
-        LOG_ERR("No boot advertisement after RESET");
-        if (!hw_reset_attempted && bno08x_hardware_reset() == 0) {
-            hw_reset_attempted = true;
-            goto retry;
-        }
-        goto unlock;
-    }
+	    /* Wait for boot advertisement on channel 0 (up to 800 ms). */
+	    ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
+	                                BNO08X_SHTP_CH_COMMAND, 800);
+	    if (ret < 0) {
+	        LOG_ERR("No boot advertisement after RESET");
+	        if (!hw_reset_attempted && bno08x_hardware_reset() == 0) {
+	            hw_reset_attempted = true;
+	            goto retry;
+	        }
+	        goto unlock;
+	    }
+
+	    LOG_INF("Boot advertisement received (%u bytes)", payload_len);
+
+	    /* Drain any remaining packets that the BNO08x may have queued
+	     * after the boot advertisement (e.g. status messages). This
+	     * prevents the product ID read from picking up a stale packet. */
+	    {
+	        int64_t drain_start = k_uptime_get();
+	        while ((k_uptime_get() - drain_start) < 100) {
+	            uint8_t *dummy_payload;
+	            uint32_t dummy_len;
+	            uint8_t dummy_ch;
+	            if (shtp_recv(pkt_buf, &dummy_payload, &dummy_len, &dummy_ch) < 0)
+	                break;
+	        }
+	    }
 
     /* Read product ID */
     uint8_t pid_l, pid_h;
