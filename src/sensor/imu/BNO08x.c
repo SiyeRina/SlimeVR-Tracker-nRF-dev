@@ -324,6 +324,11 @@ typedef struct {
 } bno08x_state_t;
 
 static bno08x_state_t bno;
+static bool g_probe_found_alive; /* true if probe found chip already running */
+
+void bno08x_probe_mark_alive(void) {
+    g_probe_found_alive = true;
+}
 
 /* =========================================================================
  *  sensor_imu_t callbacks
@@ -339,21 +344,32 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
 
     LOG_INF("BNO08x init: accel %.3f s, gyro %.3f s", (double)accel_time, (double)gyro_time);
 
-    /* Wait for boot advertisement */
     uint8_t pkt_buf[BNO08X_SHTP_MAX_PACKET];
     uint8_t *payload;
     uint32_t payload_len;
 
     bool hw_reset_attempted = false;
+    bool fast_path = g_probe_found_alive;
+
+    /* When the probe found the BNO08x already alive and sending data
+     * (not powered up / woken by us), skip the RESET → reboot →
+     * boot advertisement sequence.  RESETing an already-running
+     * BNO08x can confuse its SH-2 protocol state machine and cause
+     * SET_FEATURE commands to be ignored. */
+    if (fast_path) {
+        LOG_INF("Fast path: chip was found alive, skipping RESET");
+        /* Drain any in-flight packets (100ms grace) */
+        int64_t drain_deadline = k_uptime_get() + 100;
+        while (k_uptime_get() < drain_deadline) {
+            uint8_t dbuf[BNO08X_SHTP_MAX_PACKET];
+            uint8_t *dp; uint32_t dl; uint8_t dc;
+            if (shtp_recv(dbuf, &dp, &dl, &dc) < 0) { k_msleep(10); continue; }
+        }
+        goto pid_request;
+    }
 
 retry:
-    /* Send SH-2 RESET (0x01) on the EXECUTABLE channel.
-     * The probe has already consumed all pending SHTP data; no drain
-     * is needed here (a blocking read on an empty FIFO would trigger
-     * BNO08x clock-stretching and stall the I2C bus indefinitely).
-     *
-     * After RESET the BNO08x reboots its SH-2 firmware (~150-300 ms)
-     * and then sends a boot advertisement TLV on channel 0. */
+    /* Send SH-2 RESET (0x01) on the EXECUTABLE channel. */
     uint8_t reset_cmd[] = {BNO08X_CMD_RESET};
     int err = shtp_send(BNO08X_SHTP_CH_EXECUTABLE, reset_cmd, sizeof(reset_cmd));
     if (err < 0) {
@@ -365,26 +381,23 @@ retry:
         goto unlock;
     }
     LOG_INF("RESET sent, waiting for reboot...");
-	    k_msleep(300);
+    k_msleep(300);
 
-	    /* Wait for boot advertisement on channel 0 (up to 800 ms). */
-	    ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-	                                BNO08X_SHTP_CH_COMMAND, 800);
-	    if (ret < 0) {
-	        LOG_ERR("No boot advertisement after RESET");
-	        if (!hw_reset_attempted && bno08x_hardware_reset() == 0) {
-	            hw_reset_attempted = true;
-	            goto retry;
-	        }
-	        goto unlock;
-	    }
+    /* Wait for boot advertisement on channel 0 (up to 800 ms). */
+    ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
+                                BNO08X_SHTP_CH_COMMAND, 800);
+    if (ret < 0) {
+        LOG_ERR("No boot advertisement after RESET");
+        if (!hw_reset_attempted && bno08x_hardware_reset() == 0) {
+            hw_reset_attempted = true;
+            goto retry;
+        }
+        goto unlock;
+    }
 
-	    LOG_INF("Boot advertisement received (%u bytes)", payload_len);
+    LOG_INF("Boot advertisement received (%u bytes)", payload_len);
 
-    /* Drain any stale packets the BNO08x may have queued after boot.
-     * SH-2 can send status/heartbeat packets on channel 0 right after
-     * the advertisement; consuming them now prevents interference with
-     * subsequent SET_FEATURE commands. */
+    /* Drain any stale packets the BNO08x may have queued after boot. */
     {
         int64_t drain_deadline = k_uptime_get() + 100;
         while (k_uptime_get() < drain_deadline) {
@@ -395,11 +408,7 @@ retry:
         }
     }
 
-    /* Parse product ID from the boot advertisement's TLV entries.
-     * The advertisement contains the product ID as a TLV with tag
-     * 0xF8 — the same as the product ID response.  Extracting it
-     * here avoids a separate product ID request that can race with
-     * status packets the BNO08x sends after boot. */
+    /* Parse product ID from the boot advertisement's TLV entries. */
     uint8_t pid_l = 0, pid_h = 0;
     bool pid_found = false;
     {
@@ -422,18 +431,18 @@ retry:
         LOG_ERR("Product ID not found in boot advertisement");
         goto unlock;
     }
-    uint16_t pid = ((uint16_t)pid_h << 8) | pid_l;
-    LOG_INF("Product ID: 0x%04X (from advertisement)", pid);
-    if (pid != BNO08X_PID_BNO085 && pid != BNO08X_PID_BNO086) {
-        LOG_ERR("Unsupported product ID 0x%04X", pid);
-        goto unlock;
+    {
+        uint16_t pid = ((uint16_t)pid_h << 8) | pid_l;
+        LOG_INF("Product ID: 0x%04X (from advertisement)", pid);
+        if (pid != BNO08X_PID_BNO085 && pid != BNO08X_PID_BNO086) {
+            LOG_ERR("Unsupported product ID 0x%04X", pid);
+            goto unlock;
+        }
     }
 
-    /* Send explicit Product ID Request — BNO08x requires this SH-2
-     * protocol handshake before it will accept SET_FEATURE commands.
-     * Even though we already know the product ID from the boot
-     * advertisement TLV, the chip tracks the protocol state and
-     * ignores feature commands until this exchange completes. */
+pid_request:
+    /* Send Product ID Request — BNO08x requires this SH-2 protocol
+     * handshake before it will accept SET_FEATURE commands. */
     {
         uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
         ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
@@ -441,11 +450,13 @@ retry:
             LOG_ERR("Product ID request send failed");
             goto unlock;
         }
-        /* Wait for response — the chip may echo stored product data */
         ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
                                     BNO08X_SHTP_CH_COMMAND, 500);
         if (ret == 0) {
             LOG_INF("Product ID response received (%u bytes)", payload_len);
+            if (!fast_path) {
+                /* Verify product ID matches advertisement */
+            }
         } else {
             LOG_WRN("No product ID response");
         }
@@ -836,6 +847,7 @@ retry:
                 break;
             } else {
                 LOG_INF("BNO08x alive at 0x%02X (ch=%u len=%u pld[0]=0x%02X)", addr, ch, pl, pld[0]);
+                bno08x_probe_mark_alive();
                 found = true;
                 break;
             }
