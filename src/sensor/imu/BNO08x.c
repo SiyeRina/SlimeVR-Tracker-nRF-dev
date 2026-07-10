@@ -381,8 +381,11 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
         gpio_pin_set_dt(&bno_vcc, 0);
         k_msleep(1000);
         gpio_pin_set_dt(&bno_vcc, 1);
-        k_msleep(300);
-        LOG_INF("Sensor VCC restored, waiting for boot advertisement");
+        LOG_INF("Sensor VCC restored, waiting for sensor to boot...");
+        /* Give the BNO08x time to complete its boot sequence.
+         * The sensor needs ~500ms from power-on before it is ready
+         * on the I2C bus and sending SHTP advertisements. */
+        k_msleep(500);
     } else {
         /* Fallback: SH-2 RESET (0x01) on the EXECUTABLE channel. */
         uint8_t reset_cmd[] = {BNO08X_CMD_RESET};
@@ -395,57 +398,35 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
         k_msleep(300);
     }
 
-    /* Wait for boot advertisement on channel 0 (up to 1500 ms). */
-    ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-                                BNO08X_SHTP_CH_COMMAND, 1500);
-    if (ret < 0) {
-        LOG_ERR("No boot advertisement after RESET");
-        goto unlock;
-    }
-
-    LOG_INF("Boot advertisement received (%u bytes)", payload_len);
-
-    /* Drain any stale packets the BNO08x may have queued after boot. */
+    /* Drain any stale/boot packets from the SHTP queue.
+     * After power-on or RESET the BNO08x may send heartbeats,
+     * advertisements, and other boot-time traffic.  Drain everything
+     * so the explicit Product ID Request below gets a clean response.
+     * Give the sensor up to 2 seconds to start producing packets. */
     {
-        int64_t drain_deadline = k_uptime_get() + 100;
+        int64_t drain_deadline = k_uptime_get() + 2000;
+        bool got_packet = false;
         while (k_uptime_get() < drain_deadline) {
             uint8_t dbuf[BNO08X_SHTP_MAX_PACKET];
             uint8_t *dp; uint32_t dl; uint8_t dc;
-            if (shtp_recv(dbuf, &dp, &dl, &dc) < 0) { k_msleep(10); continue; }
-            LOG_DBG("drain: ch=%u len=%u", dc, dl);
+            if (shtp_recv(dbuf, &dp, &dl, &dc) < 0) {
+                if (got_packet) break; /* sensor went silent after boot burst */
+                k_msleep(20);
+                continue;
+            }
+            got_packet = true;
+            LOG_DBG("drain: ch=%u len=%u pld[0]=0x%02X", dc, dl, dl > 0 ? dp[0] : 0);
         }
-    }
-
-    /* Parse product ID from the boot advertisement.
-     * Boot advertisement is a SH-2 command response, NOT a TLV structure:
-     *   byte 0: command (0xF8 = product_id_response)
-     *   byte 1-2: product ID (uint16, little-endian)
-     * Fallthrough: if product ID not found here, send explicit request. */
-    uint8_t pid_l = 0, pid_h = 0;
-    bool pid_found = false;
-    if (payload_len >= 3 && payload[0] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
-        pid_l = payload[1];
-        pid_h = payload[2];
-        pid_found = true;
-        LOG_INF("Product ID 0x%02X%02X (from boot ad)", pid_h, pid_l);
-    }
-
-    if (!pid_found) {
-        LOG_ERR("Product ID not found in boot advertisement");
-        goto unlock;
-    }
-    {
-        uint16_t pid = ((uint16_t)pid_h << 8) | pid_l;
-        LOG_INF("Product ID: 0x%04X (from advertisement)", pid);
-        if (pid != BNO08X_PID_BNO085 && pid != BNO08X_PID_BNO086) {
-            LOG_ERR("Unsupported product ID 0x%04X", pid);
+        if (!got_packet) {
+            LOG_ERR("Sensor not responding after RESET");
             goto unlock;
         }
+        LOG_INF("Sensor boot complete, drained boot traffic");
     }
 
-pid_request:
-    /* Send Product ID Request — BNO08x requires this SH-2 protocol
-     * handshake before it will accept SET_FEATURE commands. */
+    /* Send Product ID Request — explicit SH-2 protocol handshake.
+     * After RESET, the BNO08x requires the host to request the product
+     * ID before it will accept SET_FEATURE commands on the CONTROL channel. */
     {
         uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
         ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
@@ -455,12 +436,15 @@ pid_request:
         }
         ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
                                     BNO08X_SHTP_CH_COMMAND, 500);
-        if (ret == 0) {
-            LOG_INF("Product ID response received (%u bytes)", payload_len);
-            /* Short settle before switching to CONTROL channel */
-            k_msleep(20);
-        } else {
-            LOG_WRN("No product ID response");
+        if (ret < 0 || payload_len < 2 || payload[0] != BNO08X_CMD_PRODUCT_ID_RESPONSE) {
+            LOG_ERR("Invalid product ID response");
+            goto unlock;
+        }
+        uint16_t pid = ((uint16_t)payload[2] << 8) | payload[1];
+        LOG_INF("Product ID: 0x%04X", pid);
+        if (pid != BNO08X_PID_BNO085 && pid != BNO08X_PID_BNO086) {
+            LOG_ERR("Unsupported product ID 0x%04X", pid);
+            goto unlock;
         }
     }
 
