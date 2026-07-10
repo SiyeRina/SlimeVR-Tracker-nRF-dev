@@ -116,16 +116,20 @@ static uint32_t shtp_build_packet(uint8_t *buf, uint8_t channel,
                                   uint8_t seq, const uint8_t *payload,
                                   uint32_t payload_len)
 {
-    /* Standard SHTP 4-byte header (host → BNO08x):
+    /* SHTP 4-byte header — DOWNLINK format (host → BNO08x):
      *   [0]       = payload length LSB
-     *   [1]       = len MSB (bits 5:0) | channel (bits 7:6)
-     *   [2]       = sequence number
-     *   [3]       = continuation / reserved (0)
-     */
+     *   [1]       = len MSB (bits 5:0), bits 7:6 reserved
+     *   [2]       = channel (0-3)
+     *   [3]       = sequence number
+     *
+     * NOTE: This is DIFFERENT from the uplink (sensor → host) format,
+     * where the channel is encoded in byte[1] bits 7:6 and byte[2]
+     * carries the sequence number.  Using the uplink layout for
+     * downlink packets routes all commands to the wrong channel. */
     buf[0] = (uint8_t)(payload_len & 0xFF);
-    buf[1] = (uint8_t)(((payload_len >> 8) & 0x3F) | ((channel & 0x03) << 6));
-    buf[2] = seq;
-    buf[3] = 0x00;
+    buf[1] = (uint8_t)((payload_len >> 8) & 0x3F);
+    buf[2] = channel;
+    buf[3] = seq;
 
     memcpy(buf + BNO08X_SHTP_HEADER_SIZE, payload, payload_len);
     uint32_t total = BNO08X_SHTP_HEADER_SIZE + payload_len;
@@ -453,38 +457,58 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
         }
     }
 
-    /* =================================================================
-     *  DIAGNOSTIC MODE: Skip all SH-2 CONTROL channel configuration.
-     *
-     *  The BNO08x CONTROL channel (ch=2) does not respond to
-     *  GET_FEATURE or SET_FEATURE.  This firmware variant tests
-     *  whether the BNO08x streams GRV data on the INPUT channel
-     *  (ch=3) by default after VCC power-cycle + wake without
-     *  requiring explicit SET_FEATURE.
-     *
-     *  Mark init as successful immediately — the fifo_read loop
-     *  will print ALL INPUT channel data to help diagnose what
-     *  sensor reports the BNO08x is sending (if any). */
+    /* Compute GRV interval from requested ODR */
+    float desired_odr = 1.0f / (accel_time < gyro_time ? accel_time : gyro_time);
+    if (desired_odr < 1.0f) desired_odr = 1.0f;
+    if (desired_odr > 400.0f) desired_odr = 400.0f;
+    uint32_t interval_us = (uint32_t)(1e6f / desired_odr);
+    if (interval_us < 2500) interval_us = 2500;
 
-    LOG_WRN("DIAGNOSTIC: Skipping SET_FEATURE, marking init as done");
-    LOG_WRN("DIAGNOSTIC: Will log ALL INPUT channel data in fifo_read");
+    /* SHTP header fix: channel is now correctly placed in byte[2]
+     * for downlink packets, so CONTROL channel SET_FEATURE should
+     * actually reach the sensor and get a FEATURE_RESPONSE. */
+    ret = bno08x_set_report(BNO08X_REPORT_GAME_ROTATION_VECTOR, interval_us);
+    if (ret < 0) {
+        LOG_ERR("Failed to enable GRV");
+        goto unlock;
+    }
 
-    /* Set default rates (100 Hz target) */
-    float actual_odr = 100.0f;
+    /* Optional: enable temperature report (0x07) for temp_read */
+    ret = bno08x_set_report(BNO08X_REPORT_TEMPERATURE, 1000000); /* 1 Hz */
+    if (ret == 0) {
+        bno.temp_enabled = true;
+        LOG_INF("Temperature report enabled");
+    } else {
+        bno.temp_enabled = false;
+        LOG_WRN("Temperature report not available");
+    }
+
+    /* Wait for first sensor report on channel 3 (INPUT). */
+    ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
+                                BNO08X_SHTP_CH_INPUT, 2000);
+    if (ret < 0) {
+        LOG_WRN("No initial sensor report within 2s");
+    } else {
+        LOG_INF("First INPUT report: id=0x%02X len=%u",
+                payload_len > 0 ? payload[0] : 0, payload_len);
+    }
+
+    /* Fill state */
+    float actual_odr = 1e6f / (float)interval_us;
     bno.actual_time = 1.0f / actual_odr;
     bno.accel_time = bno.actual_time;
     bno.gyro_time = bno.actual_time;
     *accel_actual_time = bno.actual_time;
     *gyro_actual_time = bno.actual_time;
 
-    bno.temp_enabled = false;
     bno.last_q_valid = false;
     bno.inited = true;
     bno.cached_temp = 25.0f;
     memset(bno.cached_accel, 0, sizeof(bno.cached_accel));
     memset(bno.cached_gyro, 0, sizeof(bno.cached_gyro));
 
-    LOG_WRN("BNO08x init done (DIAGNOSTIC): ODR=%.1fHz", (double)actual_odr);
+    LOG_INF("BNO08x init done: GRV=%.1fHz temp=%s", (double)actual_odr,
+            bno.temp_enabled ? "yes" : "no");
     ret = 0;
 
 unlock:
