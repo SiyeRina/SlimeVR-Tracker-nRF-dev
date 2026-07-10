@@ -86,11 +86,6 @@ int bno08x_hardware_reset(void)
 #endif
 }
 
-bool bno08x_is_inited(void)
-{
-    return bno.inited;
-}
-
 
 /* =========================================================================
  *  Mutex for thread safety
@@ -340,6 +335,11 @@ static bool g_probe_found_alive; /* true if probe found chip already running */
 
 void bno08x_probe_mark_alive(void) {
     g_probe_found_alive = true;
+}
+
+bool bno08x_is_inited(void)
+{
+    return bno.inited;
 }
 
 /* =========================================================================
