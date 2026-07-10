@@ -424,13 +424,16 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
         LOG_INF("Sensor boot complete, drained boot traffic");
     }
 
-    /* Send Product ID Request — explicit SH-2 protocol handshake.
-     * After RESET, the BNO08x requires the host to request the product
-     * ID before it will accept SET_FEATURE commands on the CONTROL channel.
+    /* =====================================================================
+     *  Product ID Handshake (SH-2 protocol requirement)
      *
-     * NOTE: The response may arrive out-of-order with heartbeat packets.
-     * If the response isn't a valid Product ID Response, we log a warning
-     * but proceed — the sensor type is already known from the probe. */
+     * After RESET the BNO08x sends heartbeats on CH_COMMAND.  We must
+     * complete the SH-2 Product ID handshake before the BNO08x will
+     * accept SET_FEATURE commands on the CONTROL channel.
+     *
+     * Strategy: send Product ID Request, then wait for a response with
+     * command byte 0xF8 (PRODUCT_ID_RESPONSE) on CH_COMMAND.  Ignore
+     * any heartbeats or other traffic on the same channel. */
     {
         uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
         ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
@@ -438,16 +441,33 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
             LOG_ERR("Product ID request send failed");
             goto unlock;
         }
-        ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-                                    BNO08X_SHTP_CH_COMMAND, 500);
-        if (ret == 0 && payload_len >= 2 && payload[0] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
-            uint16_t pid = ((uint16_t)payload[2] << 8) | payload[1];
-            LOG_INF("Product ID: 0x%04X", pid);
-            if (pid != BNO08X_PID_BNO085 && pid != BNO08X_PID_BNO086) {
-                LOG_WRN("Unrecognized product ID 0x%04X, proceeding anyway", pid);
+
+        int64_t pid_deadline = k_uptime_get() + 500;
+        bool pid_ok = false;
+        while (k_uptime_get() < pid_deadline) {
+            uint8_t ch;
+            if (shtp_recv(pkt_buf, &payload, &payload_len, &ch) < 0) {
+                k_msleep(10);
+                continue;
             }
-        } else {
-            LOG_WRN("No valid product ID response, proceeding with SET_FEATURE");
+            /* Only interested in CH_COMMAND (0) packets */
+            if (ch != BNO08X_SHTP_CH_COMMAND) continue;
+
+            /* Check for Product ID Response (0xF8) */
+            if (payload_len >= 4 && payload[0] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
+                uint16_t pid = ((uint16_t)payload[2] << 8) | payload[1];
+                LOG_INF("Product ID: 0x%04X", pid);
+                if (pid != BNO08X_PID_BNO085 && pid != BNO08X_PID_BNO086) {
+                    LOG_WRN("Unrecognized product ID 0x%04X", pid);
+                }
+                pid_ok = true;
+                break;
+            }
+            /* Heartbeat or other CH_COMMAND traffic — ignore */
+        }
+
+        if (!pid_ok) {
+            LOG_WRN("No product ID response received, proceeding anyway");
         }
     }
 
