@@ -409,9 +409,10 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
      * Strategy:
      *   1. Scan incoming boot traffic, watching for the product ID
      *      while also looking for the SHTP advertisement.
-     *   2. At the same time, periodically send Product ID Requests
-     *      (0xF9 0x00) to provoke an explicit response.
-     *   3. Filter out heartbeats / non-relevant channel traffic.
+     *   2. Periodically send Product ID Requests (0xF9 0x00) to provoke
+     *      an explicit response — this runs regardless of packet state.
+     *   3. Filter out zero-length packets (I2C returns all zeros when
+     *      the sensor has no data ready) and heartbeats.
      *   4. Total timeout: 3 seconds. */
     {
         int64_t boot_deadline = k_uptime_get() + 3000;
@@ -421,16 +422,25 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
 
         while (k_uptime_get() < boot_deadline) {
             uint8_t ch;
-            if (shtp_recv(pkt_buf, &payload, &payload_len, &ch) < 0) {
-                /* No packet ready right now.
-                 * If we already saw packets and the sensor has gone
-                 * silent, send a PID request to provoke a response. */
-                if (got_any_packet && k_uptime_get() >= next_pid_req) {
-                    uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
-                    int send_ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
-                    LOG_INF("ProdID req sent (ret=%d)", send_ret);
-                    next_pid_req = k_uptime_get() + 400; /* Retry every 400ms */
-                }
+            int rv = shtp_recv(pkt_buf, &payload, &payload_len, &ch);
+
+            /* Send PID request on a fixed timer, regardless of recv outcome */
+            if (k_uptime_get() >= next_pid_req) {
+                uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
+                int send_ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
+                LOG_INF("ProdID req sent (ret=%d)", send_ret);
+                next_pid_req = k_uptime_get() + 400;
+            }
+
+            if (rv < 0) {
+                /* Nothing from I2C — wait and retry */
+                k_msleep(15);
+                continue;
+            }
+
+            /* Filter zero-length "ghost" packets: the I2C read returned
+             * all zeros when the BNO08x had no data ready. */
+            if (payload_len == 0) {
                 k_msleep(15);
                 continue;
             }
