@@ -361,24 +361,13 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     uint32_t payload_len;
 
     bool hw_reset_attempted = false;
-    bool fast_path = g_probe_found_alive;
 
-    /* When the probe found the BNO08x already alive and sending data
-     * (not powered up / woken by us), skip the RESET → reboot →
-     * boot advertisement sequence.  RESETing an already-running
-     * BNO08x can confuse its SH-2 protocol state machine and cause
-     * SET_FEATURE commands to be ignored. */
-    if (fast_path) {
-        LOG_INF("Fast path: chip was found alive, skipping RESET");
-        /* Drain any in-flight packets (100ms grace) */
-        int64_t drain_deadline = k_uptime_get() + 100;
-        while (k_uptime_get() < drain_deadline) {
-            uint8_t dbuf[BNO08X_SHTP_MAX_PACKET];
-            uint8_t *dp; uint32_t dl; uint8_t dc;
-            if (shtp_recv(dbuf, &dp, &dl, &dc) < 0) { k_msleep(10); continue; }
-        }
-        goto pid_request;
-    }
+    /* Always RESET the BNO08x before initialization.
+     * If the chip was found "alive" during probe, its SH-2 state machine
+     * is already running and will NOT accept CONTROL channel SET_FEATURE
+     * commands.  RESET restarts the state machine into configuration-ready
+     * mode. */
+    LOG_INF("Starting init with RESET");
 
 retry:
     /* Send SH-2 RESET (0x01) on the EXECUTABLE channel. */
@@ -461,9 +450,6 @@ pid_request:
                                     BNO08X_SHTP_CH_COMMAND, 500);
         if (ret == 0) {
             LOG_INF("Product ID response received (%u bytes)", payload_len);
-            if (!fast_path) {
-                /* Verify product ID matches advertisement */
-            }
             /* Short settle before switching to CONTROL channel */
             k_msleep(20);
         } else {
