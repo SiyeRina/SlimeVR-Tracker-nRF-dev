@@ -239,7 +239,8 @@ static int bno08x_set_report(uint8_t report_id, uint32_t interval_us)
     cmd[7] = (uint8_t)((interval_us >> 16) & 0xFF);
     cmd[8] = (uint8_t)((interval_us >> 24) & 0xFF);
 
-    LOG_HEXDUMP_INF(cmd, sizeof(cmd), "SET_FEATURE 0x%02X cmd", report_id);
+    LOG_INF("SET_FEATURE 0x%02X cmd", report_id);
+    LOG_HEXDUMP_INF(cmd, sizeof(cmd), "SET_FEATURE payload");
     int err = shtp_send(BNO08X_SHTP_CH_CONTROL, cmd, sizeof(cmd));
     if (err < 0) {
         LOG_ERR("Failed to set report 0x%02X: %d", report_id, err);
