@@ -399,22 +399,31 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     }
 
     /* =====================================================================
-     *  Sensor Alive Confirmation
+     *  Sensor Wake-Up
      *
-     * After RESET the BNO08x boots up and starts sending heartbeat
-     * packets on CH_COMMAND.  Wait for the first valid heartbeat to
-     * confirm the sensor is alive and the SHTP link is functional.
+     * After RESET the BNO08x may stay silent until the host sends a
+     * "ping" on the SH-2 command channel.  The Product ID Request
+     * (0xF9 0x00) serves this purpose — the BNO08x responds with at
+     * least a heartbeat, confirming the SHTP link is operational.
      *
-     * The Product ID handshake (0xF9→0xF8) is skipped here because
-     * this BNO08x firmware variant does not respond to explicit
-     * Product ID Requests — the sensor type is already known from
-     * the probe phase.  Later, GET_FEATURE is also skipped and we
-     * go straight to SET_FEATURE on the CONTROL channel. */
+     * Send the request repeatedly (every 400ms) until we get any valid
+     * non-zero response.  Do NOT expect a Product ID Response (0xF8)
+     * specifically — this BNO08x firmware only responds with heartbeats
+     * (0x01). */
     {
-        int64_t alive_deadline = k_uptime_get() + 3000;
+        int64_t wake_deadline = k_uptime_get() + 3000;
+        int64_t next_req = k_uptime_get() + 300; /* First request after 300ms */
         bool got_alive = false;
 
-        while (k_uptime_get() < alive_deadline) {
+        while (k_uptime_get() < wake_deadline && !got_alive) {
+            /* Periodic wake request on a fixed timer */
+            if (k_uptime_get() >= next_req) {
+                uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
+                int send_ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
+                LOG_INF("Wake req sent (ret=%d)", send_ret);
+                next_req = k_uptime_get() + 400;
+            }
+
             uint8_t ch;
             int rv = shtp_recv(pkt_buf, &payload, &payload_len, &ch);
 
@@ -429,15 +438,13 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
                 continue;
             }
 
-            /* Any non-zero packet confirms sensor is alive */
+            /* Any non-zero response = sensor is alive */
             got_alive = true;
             LOG_INF("Sensor alive: ch=%u len=%u pld[0]=0x%02X",
                     ch, payload_len, payload_len > 0 ? payload[0] : 0);
             if (payload_len >= 4) {
-                LOG_HEXDUMP_INF(payload, payload_len < 32 ? payload_len : 32,
-                                "  raw");
+                LOG_HEXDUMP_INF(payload, payload_len < 32 ? payload_len : 32, "  raw");
             }
-            break; /* We're done — sensor is alive, proceed to SET_FEATURE */
         }
 
         if (!got_alive) {
