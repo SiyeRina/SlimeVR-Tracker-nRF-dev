@@ -415,23 +415,18 @@ retry:
         }
     }
 
-    /* Parse product ID from the boot advertisement's TLV entries. */
+    /* Parse product ID from the boot advertisement.
+     * Boot advertisement is a SH-2 command response, NOT a TLV structure:
+     *   byte 0: command (0xF8 = product_id_response)
+     *   byte 1-2: product ID (uint16, little-endian)
+     * Fallthrough: if product ID not found here, send explicit request. */
     uint8_t pid_l = 0, pid_h = 0;
     bool pid_found = false;
-    {
-        uint32_t pos = 0;
-        while (pos + 1 < payload_len) {
-            uint8_t tag = payload[pos];
-            uint8_t rlen = payload[pos + 1];
-            if (pos + 2 + rlen > payload_len) break;
-            if (tag == 0xF8 && rlen >= 2) {
-                pid_l = payload[pos + 2];
-                pid_h = payload[pos + 3];
-                pid_found = true;
-                break;
-            }
-            pos += 2 + rlen;
-        }
+    if (payload_len >= 3 && payload[0] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
+        pid_l = payload[1];
+        pid_h = payload[2];
+        pid_found = true;
+        LOG_INF("Product ID 0x%02X%02X (from boot ad)", pid_h, pid_l);
     }
 
     if (!pid_found) {
