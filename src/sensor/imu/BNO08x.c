@@ -398,76 +398,86 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
         k_msleep(300);
     }
 
-    /* Drain any stale/boot packets from the SHTP queue.
-     * After power-on or RESET the BNO08x may send heartbeats,
-     * advertisements, and other boot-time traffic.  Drain everything
-     * so the explicit Product ID Request below gets a clean response.
-     * Give the sensor up to 2 seconds to start producing packets. */
-    {
-        int64_t drain_deadline = k_uptime_get() + 2000;
-        bool got_packet = false;
-        while (k_uptime_get() < drain_deadline) {
-            uint8_t dbuf[BNO08X_SHTP_MAX_PACKET];
-            uint8_t *dp; uint32_t dl; uint8_t dc;
-            if (shtp_recv(dbuf, &dp, &dl, &dc) < 0) {
-                if (got_packet) break; /* sensor went silent after boot burst */
-                k_msleep(20);
-                continue;
-            }
-            got_packet = true;
-            LOG_DBG("drain: ch=%u len=%u pld[0]=0x%02X", dc, dl, dl > 0 ? dp[0] : 0);
-        }
-        if (!got_packet) {
-            LOG_ERR("Sensor not responding after RESET");
-            goto unlock;
-        }
-        LOG_INF("Sensor boot complete, drained boot traffic");
-    }
-
     /* =====================================================================
-     *  Product ID Handshake (SH-2 protocol requirement)
+     *  Boot and Product ID Handshake (SH-2 protocol requirement)
      *
-     * After RESET the BNO08x sends heartbeats on CH_COMMAND.  We must
-     * complete the SH-2 Product ID handshake before the BNO08x will
-     * accept SET_FEATURE commands on the CONTROL channel.
+     * After RESET the BNO08x broadcasts its SHTP advertisement and
+     * auto-publishes the Product ID as either a TLV entry in the
+     * advertisement (length > 100 bytes, tag 0xF8) or as a standalone
+     * SH-2 command response (payload[0] == 0xF8) on CH_COMMAND.
      *
-     * Strategy: send Product ID Request, then wait for a response with
-     * command byte 0xF8 (PRODUCT_ID_RESPONSE) on CH_COMMAND.  Ignore
-     * any heartbeats or other traffic on the same channel. */
+     * Strategy:
+     *   1. Scan incoming boot traffic, watching for the product ID
+     *      while also looking for the SHTP advertisement.
+     *   2. At the same time, periodically send Product ID Requests
+     *      (0xF9 0x00) to provoke an explicit response.
+     *   3. Filter out heartbeats / non-relevant channel traffic.
+     *   4. Total timeout: 3 seconds. */
     {
-        uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
-        ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
-        if (ret < 0) {
-            LOG_ERR("Product ID request send failed");
-            goto unlock;
-        }
-
-        int64_t pid_deadline = k_uptime_get() + 500;
+        int64_t boot_deadline = k_uptime_get() + 3000;
+        int64_t next_pid_req = k_uptime_get() + 300; /* First request after 300ms */
+        bool got_any_packet = false;
         bool pid_ok = false;
-        while (k_uptime_get() < pid_deadline) {
+
+        while (k_uptime_get() < boot_deadline) {
             uint8_t ch;
             if (shtp_recv(pkt_buf, &payload, &payload_len, &ch) < 0) {
-                k_msleep(10);
+                /* No packet ready right now.
+                 * If we already saw packets and the sensor has gone
+                 * silent, send a PID request to provoke a response. */
+                if (got_any_packet && k_uptime_get() >= next_pid_req) {
+                    uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
+                    int send_ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
+                    LOG_INF("ProdID req sent (ret=%d)", send_ret);
+                    next_pid_req = k_uptime_get() + 400; /* Retry every 400ms */
+                }
+                k_msleep(15);
                 continue;
             }
-            /* Only interested in CH_COMMAND (0) packets */
-            if (ch != BNO08X_SHTP_CH_COMMAND) continue;
 
-            /* Check for Product ID Response (0xF8) */
-            if (payload_len >= 4 && payload[0] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
-                uint16_t pid = ((uint16_t)payload[2] << 8) | payload[1];
-                LOG_INF("Product ID: 0x%04X", pid);
-                if (pid != BNO08X_PID_BNO085 && pid != BNO08X_PID_BNO086) {
-                    LOG_WRN("Unrecognized product ID 0x%04X", pid);
+            got_any_packet = true;
+
+            /* Large advertisement (SHTP-level, >100 bytes): parse TLV for tag 0xF8 */
+            if (payload_len > 100) {
+                LOG_INF("SHTP advertisement: %u bytes", payload_len);
+                uint32_t pos = 0;
+                while (pos + 1 < payload_len) {
+                    uint8_t tag = payload[pos];
+                    uint8_t rlen = payload[pos + 1];
+                    if (pos + 2 + rlen > payload_len) break;
+                    if (tag == 0xF8 && rlen >= 2) {
+                        uint16_t pid = ((uint16_t)payload[pos + 3] << 8) | payload[pos + 2];
+                        LOG_INF("Product ID from advertisement: 0x%04X", pid);
+                        pid_ok = true;
+                        break;
+                    }
+                    pos += 2 + rlen;
                 }
+                if (pid_ok) break;
+                continue; /* keep looking for PID in other packets */
+            }
+
+            /* Small packets: check for SH-2 Product ID Response on CH_COMMAND */
+            if (ch == BNO08X_SHTP_CH_COMMAND && payload_len >= 4 &&
+                payload[0] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
+                uint16_t pid = ((uint16_t)payload[2] << 8) | payload[1];
+                LOG_INF("Product ID response: 0x%04X", pid);
                 pid_ok = true;
                 break;
             }
-            /* Heartbeat or other CH_COMMAND traffic — ignore */
+
+            /* Heartbeat or other traffic — log and ignore */
+            LOG_INF("boot-traf: ch=%u len=%u pld[0]=0x%02X", ch, payload_len,
+                    payload_len > 0 ? payload[0] : 0);
+        }
+
+        if (!got_any_packet) {
+            LOG_ERR("Sensor not responding after RESET");
+            goto unlock;
         }
 
         if (!pid_ok) {
-            LOG_WRN("No product ID response received, proceeding anyway");
+            LOG_WRN("No product ID found in boot traffic, proceeding anyway");
         }
     }
 
