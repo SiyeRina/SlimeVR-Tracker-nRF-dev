@@ -453,57 +453,38 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
         }
     }
 
-    /* Skip GET_FEATURE — this BNO08x variant does not respond on the
-     * CONTROL channel until after a SET_FEATURE is processed.  Go
-     * directly to configuring the GRV report. */
+    /* =================================================================
+     *  DIAGNOSTIC MODE: Skip all SH-2 CONTROL channel configuration.
+     *
+     *  The BNO08x CONTROL channel (ch=2) does not respond to
+     *  GET_FEATURE or SET_FEATURE.  This firmware variant tests
+     *  whether the BNO08x streams GRV data on the INPUT channel
+     *  (ch=3) by default after VCC power-cycle + wake without
+     *  requiring explicit SET_FEATURE.
+     *
+     *  Mark init as successful immediately — the fifo_read loop
+     *  will print ALL INPUT channel data to help diagnose what
+     *  sensor reports the BNO08x is sending (if any). */
 
-    /* Compute GRV interval */
-    float desired_odr = 1.0f / (accel_time < gyro_time ? accel_time : gyro_time);
-    if (desired_odr < 1.0f) desired_odr = 1.0f;
-    if (desired_odr > 400.0f) desired_odr = 400.0f;
-    uint32_t interval_us = (uint32_t)(1e6f / desired_odr);
-    if (interval_us < 2500) interval_us = 2500;
+    LOG_WRN("DIAGNOSTIC: Skipping SET_FEATURE, marking init as done");
+    LOG_WRN("DIAGNOSTIC: Will log ALL INPUT channel data in fifo_read");
 
-    ret = bno08x_set_report(BNO08X_REPORT_GAME_ROTATION_VECTOR, interval_us);
-    if (ret < 0) {
-        LOG_ERR("Failed to enable GRV");
-        goto unlock;
-    }
-
-    /* Optional: enable temperature report (0x07) for temp_read */
-    ret = bno08x_set_report(BNO08X_REPORT_TEMPERATURE, 1000000); /* 1 Hz */
-    if (ret == 0) {
-        bno.temp_enabled = true;
-        LOG_INF("Temperature report enabled");
-    } else {
-        bno.temp_enabled = false;
-        LOG_WRN("Temperature report not available");
-    }
-
-    /* Wait for first sensor report on channel 3 (INPUT).
-     * May take longer now due to drain + extended feature response wait. */
-    ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-                                BNO08X_SHTP_CH_INPUT, 1500);
-    if (ret < 0) {
-        LOG_WRN("No initial sensor report");
-    }
-
-    /* Fill state */
-    float actual_odr = 1e6f / (float)interval_us;
+    /* Set default rates (100 Hz target) */
+    float actual_odr = 100.0f;
     bno.actual_time = 1.0f / actual_odr;
     bno.accel_time = bno.actual_time;
     bno.gyro_time = bno.actual_time;
     *accel_actual_time = bno.actual_time;
     *gyro_actual_time = bno.actual_time;
 
+    bno.temp_enabled = false;
     bno.last_q_valid = false;
     bno.inited = true;
     bno.cached_temp = 25.0f;
     memset(bno.cached_accel, 0, sizeof(bno.cached_accel));
     memset(bno.cached_gyro, 0, sizeof(bno.cached_gyro));
 
-    LOG_WRN("BNO08x init done: GRV=%.1fHz temp=%s", actual_odr,
-            bno.temp_enabled ? "yes" : "no");
+    LOG_WRN("BNO08x init done (DIAGNOSTIC): ODR=%.1fHz", (double)actual_odr);
     ret = 0;
 
 unlock:
@@ -593,7 +574,8 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
         if (channel != BNO08X_SHTP_CH_INPUT) {
             static int non_input;
             if (++non_input <= 3)
-                LOG_INF("skip ch=%u len=%u id=0x%02X", channel, payload_len, payload_len > 0 ? payload[0] : 0);
+                LOG_INF("skip ch=%u len=%u id=0x%02X", channel, payload_len,
+                        payload_len > 0 ? payload[0] : 0);
             /* Graceful timeout: if we get only heartbeats for >5ms, yield to sensor loop */
             if (k_uptime_get() - start > 5) {
                 break;
@@ -603,15 +585,30 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
 
         uint8_t report_id = payload[0];
 
-        if (report_id == BNO08X_REPORT_TEMPERATURE && bno.temp_enabled && payload_len >= 7) {
-            bno.cached_temp = decode_temperature(payload);
+        /* DIAGNOSTIC: Log every INPUT channel packet */
+        {
+            static int input_count;
+            if (++input_count <= 20) {
+                LOG_INF("INPUT #%d: id=0x%02X len=%u", input_count, report_id, payload_len);
+                if (payload_len > 0 && payload_len <= 32) {
+                    LOG_HEXDUMP_INF(payload, payload_len, "  data");
+                }
+            }
+        }
+
+        if (report_id == BNO08X_REPORT_TEMPERATURE && payload_len >= 7) {
+            float t = decode_temperature(payload);
+            bno.cached_temp = t;
+            static int temp_count;
+            if (++temp_count <= 3)
+                LOG_INF("TEMP: %.2f C", (double)t);
             continue;
         }
 
         if (report_id != BNO08X_REPORT_GAME_ROTATION_VECTOR || payload_len < 24) {
             static int non_grv;
-            if (++non_grv <= 3)
-                LOG_WRN("skip INPUT id=0x%02X len=%u", report_id, payload_len);
+            if (++non_grv <= 5)
+                LOG_WRN("skip INPUT id=0x%02X len=%u (not GRV)", report_id, payload_len);
             continue;
         }
 
