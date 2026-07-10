@@ -399,116 +399,56 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     }
 
     /* =====================================================================
-     *  Boot and Product ID Handshake (SH-2 protocol requirement)
+     *  Sensor Alive Confirmation
      *
-     * After RESET the BNO08x broadcasts its SHTP advertisement and
-     * auto-publishes the Product ID as either a TLV entry in the
-     * advertisement (length > 100 bytes, tag 0xF8) or as a standalone
-     * SH-2 command response (payload[0] == 0xF8) on CH_COMMAND.
+     * After RESET the BNO08x boots up and starts sending heartbeat
+     * packets on CH_COMMAND.  Wait for the first valid heartbeat to
+     * confirm the sensor is alive and the SHTP link is functional.
      *
-     * Strategy:
-     *   1. Scan incoming boot traffic, watching for the product ID
-     *      while also looking for the SHTP advertisement.
-     *   2. Periodically send Product ID Requests (0xF9 0x00) to provoke
-     *      an explicit response — this runs regardless of packet state.
-     *   3. Filter out zero-length packets (I2C returns all zeros when
-     *      the sensor has no data ready) and heartbeats.
-     *   4. Total timeout: 3 seconds. */
+     * The Product ID handshake (0xF9→0xF8) is skipped here because
+     * this BNO08x firmware variant does not respond to explicit
+     * Product ID Requests — the sensor type is already known from
+     * the probe phase.  Later, GET_FEATURE is also skipped and we
+     * go straight to SET_FEATURE on the CONTROL channel. */
     {
-        int64_t boot_deadline = k_uptime_get() + 3000;
-        int64_t next_pid_req = k_uptime_get() + 300; /* First request after 300ms */
-        bool got_any_packet = false;
-        bool pid_ok = false;
+        int64_t alive_deadline = k_uptime_get() + 3000;
+        bool got_alive = false;
 
-        while (k_uptime_get() < boot_deadline) {
+        while (k_uptime_get() < alive_deadline) {
             uint8_t ch;
             int rv = shtp_recv(pkt_buf, &payload, &payload_len, &ch);
 
-            /* Send PID request on a fixed timer, regardless of recv outcome */
-            if (k_uptime_get() >= next_pid_req) {
-                uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
-                int send_ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
-                LOG_INF("ProdID req sent (ret=%d)", send_ret);
-                next_pid_req = k_uptime_get() + 400;
-            }
-
             if (rv < 0) {
-                /* Nothing from I2C — wait and retry */
                 k_msleep(15);
                 continue;
             }
 
-            /* Filter zero-length "ghost" packets: the I2C read returned
-             * all zeros when the BNO08x had no data ready. */
+            /* Filter zero-length ghost packets */
             if (payload_len == 0) {
                 k_msleep(15);
                 continue;
             }
 
-            got_any_packet = true;
-
-            /* Large advertisement (SHTP-level, >100 bytes): parse TLV for tag 0xF8 */
-            if (payload_len > 100) {
-                LOG_INF("SHTP advertisement: %u bytes", payload_len);
-                uint32_t pos = 0;
-                while (pos + 1 < payload_len) {
-                    uint8_t tag = payload[pos];
-                    uint8_t rlen = payload[pos + 1];
-                    if (pos + 2 + rlen > payload_len) break;
-                    if (tag == 0xF8 && rlen >= 2) {
-                        uint16_t pid = ((uint16_t)payload[pos + 3] << 8) | payload[pos + 2];
-                        LOG_INF("Product ID from advertisement: 0x%04X", pid);
-                        pid_ok = true;
-                        break;
-                    }
-                    pos += 2 + rlen;
-                }
-                if (pid_ok) break;
-                continue; /* keep looking for PID in other packets */
+            /* Any non-zero packet confirms sensor is alive */
+            got_alive = true;
+            LOG_INF("Sensor alive: ch=%u len=%u pld[0]=0x%02X",
+                    ch, payload_len, payload_len > 0 ? payload[0] : 0);
+            if (payload_len >= 4) {
+                LOG_HEXDUMP_INF(payload, payload_len < 32 ? payload_len : 32,
+                                "  raw");
             }
-
-            /* Small packets: check for SH-2 Product ID Response on CH_COMMAND */
-            if (ch == BNO08X_SHTP_CH_COMMAND && payload_len >= 4 &&
-                payload[0] == BNO08X_CMD_PRODUCT_ID_RESPONSE) {
-                uint16_t pid = ((uint16_t)payload[2] << 8) | payload[1];
-                LOG_INF("Product ID response: 0x%04X", pid);
-                pid_ok = true;
-                break;
-            }
-
-            /* Heartbeat or other traffic — log and ignore */
-            LOG_INF("boot-traf: ch=%u len=%u pld[0]=0x%02X", ch, payload_len,
-                    payload_len > 0 ? payload[0] : 0);
+            break; /* We're done — sensor is alive, proceed to SET_FEATURE */
         }
 
-        if (!got_any_packet) {
+        if (!got_alive) {
             LOG_ERR("Sensor not responding after RESET");
             goto unlock;
         }
-
-        if (!pid_ok) {
-            LOG_WRN("No product ID found in boot traffic, proceeding anyway");
-        }
     }
 
-    /* Query feature support before enabling.
-     * SH-2 protocol requires GET_FEATURE_REQUEST handshake; skipping it
-     * can cause the BNO08x to ignore subsequent SET_FEATURE commands. */
-    {
-        uint8_t get_feat[] = {BNO08X_CMD_GET_FEATURE, BNO08X_REPORT_GAME_ROTATION_VECTOR};
-        ret = shtp_send(BNO08X_SHTP_CH_CONTROL, get_feat, sizeof(get_feat));
-        if (ret < 0) {
-            LOG_ERR("GET_FEATURE GRV send failed");
-            goto unlock;
-        }
-        ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-                                    BNO08X_SHTP_CH_CONTROL, 300);
-        if (ret == 0 && payload_len >= 2 && payload[0] == BNO08X_CMD_FEATURE_RESPONSE) {
-            LOG_INF("GRV feature: flags=0x%02X len=%u", payload[1], payload_len);
-        } else {
-            LOG_WRN("No GET_FEATURE response for GRV");
-        }
-    }
+    /* Skip GET_FEATURE — this BNO08x variant does not respond on the
+     * CONTROL channel until after a SET_FEATURE is processed.  Go
+     * directly to configuring the GRV report. */
 
     /* Compute GRV interval */
     float desired_odr = 1.0f / (accel_time < gyro_time ? accel_time : gyro_time);
