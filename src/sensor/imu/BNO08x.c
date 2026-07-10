@@ -86,6 +86,11 @@ int bno08x_hardware_reset(void)
 #endif
 }
 
+bool bno08x_is_inited(void)
+{
+    return bno.inited;
+}
+
 
 /* =========================================================================
  *  Mutex for thread safety
@@ -530,7 +535,7 @@ pid_request:
     memset(bno.cached_accel, 0, sizeof(bno.cached_accel));
     memset(bno.cached_gyro, 0, sizeof(bno.cached_gyro));
 
-    LOG_INF("BNO08x init done: GRV=%.1fHz temp=%s", actual_odr,
+    LOG_WRN("BNO08x init done: GRV=%.1fHz temp=%s", actual_odr,
             bno.temp_enabled ? "yes" : "no");
     ret = 0;
 

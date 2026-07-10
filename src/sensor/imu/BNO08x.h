@@ -96,6 +96,7 @@ int bno08x_read_product_id(uint8_t *pid_low, uint8_t *pid_high);
 int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_register);
 void bno08x_probe_mark_alive(void);
 int bno08x_hardware_reset(void);
+bool bno08x_is_inited(void);
 
 /* =========================================================================
  *  sensor_imu_t Instance
