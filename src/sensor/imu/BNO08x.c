@@ -364,97 +364,40 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     uint8_t *payload;
     uint32_t payload_len;
 
-    bool hw_available = false;
-
-#if DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, vcc_gpios)
-    hw_available = device_is_ready(bno_vcc.port);
-#endif
-
-    /* Always RESET the BNO08x before initialization.
-     * If the chip was found "alive" during probe, its SH-2 state machine
-     * is already running and will NOT accept CONTROL channel SET_FEATURE
-     * commands.  RESET restarts the state machine into configuration-ready
-     * mode.
-     *
-     * Prefer hardware (VCC power-cycle) reset when available; it is more
-     * reliable than the SH-2 RESET command over SHTP. */
-    LOG_INF("Starting init with RESET (hw=%s)", hw_available ? "yes" : "no");
-
-    if (hw_available) {
-        LOG_INF("Power-cycling sensor VCC...");
-        gpio_pin_set_dt(&bno_vcc, 0);
-        k_msleep(1000);
-        gpio_pin_set_dt(&bno_vcc, 1);
-        LOG_INF("Sensor VCC restored, waiting for sensor to boot...");
-        /* Give the BNO08x time to complete its boot sequence.
-         * The sensor needs ~500ms from power-on before it is ready
-         * on the I2C bus and sending SHTP advertisements. */
-        k_msleep(500);
-    } else {
-        /* Fallback: SH-2 RESET (0x01) on the EXECUTABLE channel. */
-        uint8_t reset_cmd[] = {BNO08X_CMD_RESET};
-        int err = shtp_send(BNO08X_SHTP_CH_EXECUTABLE, reset_cmd, sizeof(reset_cmd));
-        if (err < 0) {
-            LOG_ERR("SH-2 RESET send failed: %d", err);
-            goto unlock;
-        }
-        LOG_INF("SH-2 RESET sent, waiting for reboot...");
-        k_msleep(300);
-    }
-
     /* =====================================================================
-     *  Sensor Wake-Up
+     *  NO-RESET init — skip VCC power cycle entirely.
      *
-     * After RESET the BNO08x may stay silent until the host sends a
-     * "ping" on the SH-2 command channel.  The Product ID Request
-     * (0xF9 0x00) serves this purpose — the BNO08x responds with at
-     * least a heartbeat, confirming the SHTP link is operational.
+     *  The probe already found the BNO08x alive (boot advertisement was
+     *  received).  VCC power cycle disconnects USB, making debug logs
+     *  invisible.  With the SHTP header fix (channel correctly in
+     *  byte[2] for downlink packets), SET_FEATURE should now reach the
+     *  CONTROL channel without needing a reset.
      *
-     * Send the request repeatedly (every 400ms) until we get any valid
-     * non-zero response.  Do NOT expect a Product ID Response (0xF8)
-     * specifically — this BNO08x firmware only responds with heartbeats
-     * (0x01). */
+     *  Just drain any stale boot traffic, and proceed directly to
+     *  feature configuration. */
+
+    LOG_INF("Draining stale traffic (no reset)...");
+
     {
-        int64_t wake_deadline = k_uptime_get() + 3000;
-        int64_t next_req = k_uptime_get() + 300; /* First request after 300ms */
-        bool got_alive = false;
-
-        while (k_uptime_get() < wake_deadline && !got_alive) {
-            /* Periodic wake request on a fixed timer */
-            if (k_uptime_get() >= next_req) {
-                uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
-                int send_ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
-                LOG_INF("Wake req sent (ret=%d)", send_ret);
-                next_req = k_uptime_get() + 400;
-            }
-
+        int64_t drain_deadline = k_uptime_get() + 500;
+        int drained = 0;
+        while (k_uptime_get() < drain_deadline) {
             uint8_t ch;
             int rv = shtp_recv(pkt_buf, &payload, &payload_len, &ch);
-
             if (rv < 0) {
-                k_msleep(15);
+                k_msleep(10);
                 continue;
             }
-
-            /* Filter zero-length ghost packets */
             if (payload_len == 0) {
-                k_msleep(15);
+                k_msleep(10);
                 continue;
             }
-
-            /* Any non-zero response = sensor is alive */
-            got_alive = true;
-            LOG_INF("Sensor alive: ch=%u len=%u pld[0]=0x%02X",
-                    ch, payload_len, payload_len > 0 ? payload[0] : 0);
-            if (payload_len >= 4) {
-                LOG_HEXDUMP_INF(payload, payload_len < 32 ? payload_len : 32, "  raw");
-            }
+            drained++;
+            LOG_INF("Drain #%d: ch=%u len=%u pld[0]=0x%02X",
+                    drained, ch, payload_len,
+                    payload_len > 0 ? payload[0] : 0);
         }
-
-        if (!got_alive) {
-            LOG_ERR("Sensor not responding after RESET");
-            goto unlock;
-        }
+        LOG_INF("Drain complete: %d packets", drained);
     }
 
     /* Compute GRV interval from requested ODR */
