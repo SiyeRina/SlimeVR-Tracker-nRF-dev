@@ -625,6 +625,10 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
     /* We'll accumulate delay from consecutive reports within this call */
     uint32_t accumulated_delay_us = 0;
 
+    /* Report type stats — printk summary every 5s */
+    static uint32_t report_counts[256];
+    static int64_t last_stats_time;
+
     /* Diagnostic: count calls and log first few */
     static int call_count;
     call_count++;
@@ -659,10 +663,26 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
 
         uint8_t report_id = payload[0];
 
+        /* Count every report type */
+        report_counts[report_id & 0xFF]++;
+
+        /* Print stats every 5s */
+        if (last_stats_time == 0) {
+            last_stats_time = k_uptime_get();
+        } else if (k_uptime_get() - last_stats_time > 5000) {
+            printk("[STATS] Report counts:\n");
+            for (int i = 0; i < 256; i++) {
+                if (report_counts[i] > 0) {
+                    printk("  id=0x%02X: %u\n", i, report_counts[i]);
+                }
+            }
+            last_stats_time = k_uptime_get();
+        }
+
         /* For non-INPUT channels, check if this looks like sensor data */
         if (channel != BNO08X_SHTP_CH_INPUT) {
-            /* Known sensor report IDs: 0x02-0x20 range covers most reports */
-            bool is_report = (report_id >= 0x02 && report_id <= 0x20);
+            /* Known sensor report IDs: 0x01-0x20 range covers most reports */
+            bool is_report = (report_id >= 0x01 && report_id <= 0x20);
             if (!is_report) {
                 /* Silently drain FRS and other non-data packets.
                  * Timeout extended to 200ms to let the sensor finish
