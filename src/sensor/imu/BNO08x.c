@@ -243,18 +243,43 @@ static int bno08x_set_report(uint8_t report_id, uint32_t interval_us)
     cmd[7] = (uint8_t)((interval_us >> 16) & 0xFF);
     cmd[8] = (uint8_t)((interval_us >> 24) & 0xFF);
 
-    LOG_INF("SET_FEATURE 0x%02X cmd", report_id);
-    LOG_HEXDUMP_INF(cmd, sizeof(cmd), "SET_FEATURE payload");
-    int err = shtp_send(BNO08X_SHTP_CH_CONTROL, cmd, sizeof(cmd));
+    /* ---- Step A: GET_FEATURE first to "open" the CONTROL channel ---- */
+    uint8_t get_cmd[] = {BNO08X_CMD_GET_FEATURE, report_id};
+    LOG_INF("GET_FEATURE 0x%02X", report_id);
+    int err = shtp_send(BNO08X_SHTP_CH_CONTROL, get_cmd, sizeof(get_cmd));
     if (err < 0) {
-        LOG_ERR("Failed to set report 0x%02X: %d", report_id, err);
+        LOG_ERR("GET_FEATURE send failed: %d", err);
         return err;
     }
-    LOG_INF("SET_FEATURE 0x%02X sent (%d bytes)", report_id, err);
 
-    /* Wait for response — monitor ALL channels (not just CONTROL).
-     * The FEATURE_RESPONSE may arrive on a different channel than expected,
-     * or the sensor may need more than 200ms to process SET_FEATURE. */
+    /* Listen for GET_FEATURE response (0xFC on any channel) */
+    {
+        uint8_t buf[BNO08X_SHTP_MAX_PACKET];
+        uint8_t *payload;
+        uint32_t len;
+        uint8_t ch;
+        int64_t dl = k_uptime_get() + 300;
+        while (k_uptime_get() < dl) {
+            err = shtp_recv(buf, &payload, &len, &ch);
+            if (err < 0 || len == 0) { k_msleep(5); continue; }
+            printk("[GET rsp] ch=%u len=%u pld[0]=0x%02X\n", ch, len, payload[0]);
+            if (payload[0] == BNO08X_CMD_FEATURE_RESPONSE) {
+                printk("[GET] FEATURE_RESPONSE for 0x%02X (len=%u)\n", report_id, len);
+                break;
+            }
+            k_msleep(5);
+        }
+    }
+
+    /* ---- Step B: SET_FEATURE ---- */
+    printk("[SET_FEATURE] report=0x%02X interval=%u us\n", report_id, interval_us);
+    err = shtp_send(BNO08X_SHTP_CH_CONTROL, cmd, sizeof(cmd));
+    if (err < 0) {
+        LOG_ERR("SET_FEATURE send failed: %d", err);
+        return err;
+    }
+
+    /* Listen for response on ANY channel, check status byte */
     {
         uint8_t buf[BNO08X_SHTP_MAX_PACKET];
         uint8_t *payload;
@@ -265,30 +290,27 @@ static int bno08x_set_report(uint8_t report_id, uint32_t interval_us)
 
         while (k_uptime_get() < deadline && !got_response) {
             err = shtp_recv(buf, &payload, &len, &ch);
-            if (err < 0) {
-                k_msleep(5);
-                continue;
-            }
-            if (len == 0) {
-                k_msleep(5);
-                continue;
-            }
+            if (err < 0) { k_msleep(5); continue; }
+            if (len == 0) { k_msleep(5); continue; }
 
-            /* Log EVERYTHING we receive */ 
-            LOG_INF("  SFR rsp: ch=%u len=%u pld[0]=0x%02X", ch, len,
-                    len > 0 ? payload[0] : 0);
-            if (len >= 2 && len <= 32) {
-                LOG_HEXDUMP_INF(payload, len, "  SFR data");
+            printk("[SET rsp] ch=%u len=%u pld[0]=0x%02X", ch, len, payload[0]);
+            if (len >= 3) {
+                printk(" pld[1]=0x%02X pld[2]=0x%02X", payload[1], payload[2]);
             }
+            printk("\n");
 
-            if (payload[0] == BNO08X_CMD_FEATURE_RESPONSE && len >= 2) {
-                LOG_INF("  => FEATURE_RESPONSE for report 0x%02X (len=%u)", report_id, len);
-                got_response = true;
-                err = 0;
-            } else {
-                /* Keep listening — there may be more packets */
-                k_msleep(5);
+            if (payload[0] == BNO08X_CMD_FEATURE_RESPONSE && len >= 3) {
+                uint8_t status = payload[2];
+                printk("[SET] FEATURE_RESPONSE: report=0x%02X status=0x%02X\n",
+                       payload[1], status);
+                if (status == 0) {
+                    got_response = true;
+                    err = 0;
+                } else {
+                    printk("[SET] ERROR: status=0x%02X (non-zero!)\n", status);
+                }
             }
+            k_msleep(5);
         }
 
         if (got_response) {
@@ -296,7 +318,7 @@ static int bno08x_set_report(uint8_t report_id, uint32_t interval_us)
         }
     }
 
-    LOG_WRN("No FEATURE_RESPONSE received within 500ms");
+    LOG_WRN("No valid FEATURE_RESPONSE within 500ms");
     return -ETIMEDOUT;
 }
 
@@ -605,6 +627,13 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
     /* We'll accumulate delay from consecutive reports within this call */
     uint32_t accumulated_delay_us = 0;
 
+    /* Diagnostic: count calls and log first few */
+    static int call_count;
+    call_count++;
+    if (call_count <= 10) {
+        printk("[FIFO] call #%d\n", call_count);
+    }
+
     int64_t start = k_uptime_get();
     while (samples < max_samples) {
         uint8_t pkt_buf[BNO08X_SHTP_MAX_PACKET];
@@ -615,16 +644,21 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
         int err = shtp_recv(pkt_buf, &payload, &payload_len, &channel);
         if (err < 0) {
             static int recv_errs;
-            if (++recv_errs <= 3)
-                LOG_WRN("shtp_recv fail #%d", recv_errs);
+            recv_errs++;
+            if (recv_errs <= 3) {
+                printk("[FIFO] shtp_recv FAIL #%d\n", recv_errs);
+            }
             break;
         }
 
         if (channel != BNO08X_SHTP_CH_INPUT) {
             static int non_input;
-            if (++non_input <= 3)
-                LOG_INF("skip ch=%u len=%u id=0x%02X", channel, payload_len,
-                        payload_len > 0 ? payload[0] : 0);
+            non_input++;
+            if (non_input <= 3) {
+                printk("[FIFO] non-input: ch=%u len=%u pld[0]=0x%02X\n",
+                       channel, payload_len,
+                       payload_len > 0 ? payload[0] : 0);
+            }
             /* Graceful timeout: if we get only heartbeats for >5ms, yield to sensor loop */
             if (k_uptime_get() - start > 5) {
                 break;
