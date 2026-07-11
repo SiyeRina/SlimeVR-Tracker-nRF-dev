@@ -252,22 +252,51 @@ static int bno08x_set_report(uint8_t report_id, uint32_t interval_us)
     }
     LOG_INF("SET_FEATURE 0x%02X sent (%d bytes)", report_id, err);
 
-    /* Wait for FEATURE_RESPONSE (0xFC) to confirm.
-     * BNO08x can take 50-200ms to process SET_FEATURE depending on
-     * SH-2 firmware version and sensor initialization state. */
-    uint8_t buf[BNO08X_SHTP_MAX_PACKET];
-    uint8_t *payload;
-    uint32_t len;
-    err = shtp_wait_for_channel(buf, &payload, &len, BNO08X_SHTP_CH_CONTROL, 200);
-    if (err == 0 && len >= 2 && payload[0] == BNO08X_CMD_FEATURE_RESPONSE) {
-        LOG_INF("FEATURE_RESPONSE for report 0x%02X: payload=%u bytes", report_id, len);
-        return 0;
+    /* Wait for response — monitor ALL channels (not just CONTROL).
+     * The FEATURE_RESPONSE may arrive on a different channel than expected,
+     * or the sensor may need more than 200ms to process SET_FEATURE. */
+    {
+        uint8_t buf[BNO08X_SHTP_MAX_PACKET];
+        uint8_t *payload;
+        uint32_t len;
+        uint8_t ch;
+        int64_t deadline = k_uptime_get() + 500;
+        bool got_response = false;
+
+        while (k_uptime_get() < deadline && !got_response) {
+            err = shtp_recv(buf, &payload, &len, &ch);
+            if (err < 0) {
+                k_msleep(5);
+                continue;
+            }
+            if (len == 0) {
+                k_msleep(5);
+                continue;
+            }
+
+            /* Log EVERYTHING we receive */ 
+            LOG_INF("  SFR rsp: ch=%u len=%u pld[0]=0x%02X", ch, len,
+                    len > 0 ? payload[0] : 0);
+            if (len >= 2 && len <= 32) {
+                LOG_HEXDUMP_INF(payload, len, "  SFR data");
+            }
+
+            if (payload[0] == BNO08X_CMD_FEATURE_RESPONSE && len >= 2) {
+                LOG_INF("  => FEATURE_RESPONSE for report 0x%02X (len=%u)", report_id, len);
+                got_response = true;
+                err = 0;
+            } else {
+                /* Keep listening — there may be more packets */
+                k_msleep(5);
+            }
+        }
+
+        if (got_response) {
+            return 0;
+        }
     }
-    if (err == 0) {
-        LOG_HEXDUMP_WRN(payload, len, "Unexpected CONTROL response (expected 0xFC)");
-    } else {
-        LOG_WRN("No feature response for report 0x%02X (err=%d)", report_id, err);
-    }
+
+    LOG_WRN("No FEATURE_RESPONSE received within 500ms");
     return -ETIMEDOUT;
 }
 
