@@ -97,6 +97,8 @@ int bno08x_scan_probe(struct i2c_dt_spec *i2c_dev, uint8_t *reg, bool interface_
 void bno08x_probe_mark_alive(void);
 int bno08x_hardware_reset(void);
 bool bno08x_is_inited(void);
+int8_t bno08x_get_init_step(void);
+int8_t bno08x_get_init_err(void);
 
 /* =========================================================================
  *  sensor_imu_t Instance

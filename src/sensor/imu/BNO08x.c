@@ -330,6 +330,10 @@ typedef struct {
     float cached_temp;       /* °C */
     bool inited;
 
+    /* Init diagnostics (survive log truncation) */
+    int8_t init_step;      /* last init step reached: 1=drain, 2=PID, 3=GRV, 4=temp, 5=input, 6=done, -N=fail */
+    int8_t init_err;       /* error code at failure step */
+
     /* Temperature report enabled? */
     bool temp_enabled;
 } bno08x_state_t;
@@ -344,6 +348,16 @@ void bno08x_probe_mark_alive(void) {
 bool bno08x_is_inited(void)
 {
     return bno.inited;
+}
+
+int8_t bno08x_get_init_step(void)
+{
+    return bno.init_step;
+}
+
+int8_t bno08x_get_init_err(void)
+{
+    return bno.init_err;
 }
 
 /* =========================================================================
@@ -364,42 +378,70 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     uint8_t *payload;
     uint32_t payload_len;
 
-    /* =====================================================================
-     *  NO-RESET init — skip VCC power cycle entirely.
-     *
-     *  The probe already found the BNO08x alive (boot advertisement was
-     *  received).  VCC power cycle disconnects USB, making debug logs
-     *  invisible.  With the SHTP header fix (channel correctly in
-     *  byte[2] for downlink packets), SET_FEATURE should now reach the
-     *  CONTROL channel without needing a reset.
-     *
-     *  Just drain any stale boot traffic, and proceed directly to
-     *  feature configuration. */
+    /* Reset diagnostics */
+    bno.init_step = 0;
+    bno.init_err = 0;
 
-    LOG_INF("Draining stale traffic (no reset)...");
+    /* Step 1: Drain stale boot traffic (probe already read advertisement).
+     * Drain until quiet for 100ms, max 500ms total. */
+    LOG_INF("[init step 1] Draining stale traffic...");
+    bno.init_step = 1;
 
     {
         int64_t drain_deadline = k_uptime_get() + 500;
+        int64_t last_pkt = k_uptime_get();
         int drained = 0;
         while (k_uptime_get() < drain_deadline) {
             uint8_t ch;
             int rv = shtp_recv(pkt_buf, &payload, &payload_len, &ch);
-            if (rv < 0) {
+            if (rv < 0 || payload_len == 0) {
+                if ((k_uptime_get() - last_pkt) > 100) break; /* quiet */
                 k_msleep(10);
                 continue;
             }
-            if (payload_len == 0) {
-                k_msleep(10);
-                continue;
-            }
+            last_pkt = k_uptime_get();
             drained++;
-            LOG_INF("Drain #%d: ch=%u len=%u pld[0]=0x%02X",
+            LOG_INF("  Drain #%d: ch=%u len=%u pld[0]=0x%02X",
                     drained, ch, payload_len,
                     payload_len > 0 ? payload[0] : 0);
         }
-        LOG_INF("Drain complete: %d packets", drained);
+        LOG_INF("  Drain done: %d packets", drained);
     }
 
+    /* Step 2: Product ID handshake.
+     * Send 0xF9 on COMMAND channel.  This tells the SH-2 firmware the
+     * host is present and ready.  Response may be 0xF8 (Product ID)
+     * or 0x01 (heartbeat) — either confirms the handshake. */
+    LOG_INF("[init step 2] Product ID handshake...");
+    bno.init_step = 2;
+
+    {
+        uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
+        ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
+        if (ret < 0) {
+            LOG_ERR("  PID request send failed: %d", ret);
+            bno.init_err = ret;
+            goto unlock;
+        }
+
+        uint8_t ch;
+        ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
+                                    BNO08X_SHTP_CH_COMMAND, 500);
+        if (ret < 0) {
+            LOG_WRN("  No response to PID request");
+            /* Non-fatal: proceed anyway */
+        } else {
+            LOG_INF("  PID response: ch=%u len=%u pld[0]=0x%02X",
+                    BNO08X_SHTP_CH_COMMAND, payload_len,
+                    payload_len > 0 ? payload[0] : 0);
+            if (payload_len >= 4) {
+                LOG_HEXDUMP_INF(payload, payload_len < 32 ? payload_len : 32,
+                               "  raw");
+            }
+        }
+    }
+
+    /* Step 3: Enable Game Rotation Vector via SET_FEATURE on CONTROL channel. */
     /* Compute GRV interval from requested ODR */
     float desired_odr = 1.0f / (accel_time < gyro_time ? accel_time : gyro_time);
     if (desired_odr < 1.0f) desired_odr = 1.0f;
@@ -407,36 +449,47 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     uint32_t interval_us = (uint32_t)(1e6f / desired_odr);
     if (interval_us < 2500) interval_us = 2500;
 
-    /* SHTP header fix: channel is now correctly placed in byte[2]
-     * for downlink packets, so CONTROL channel SET_FEATURE should
-     * actually reach the sensor and get a FEATURE_RESPONSE. */
+    LOG_INF("[init step 3] SET_FEATURE GRV (interval=%u us)...", interval_us);
+    bno.init_step = 3;
+
     ret = bno08x_set_report(BNO08X_REPORT_GAME_ROTATION_VECTOR, interval_us);
     if (ret < 0) {
-        LOG_ERR("Failed to enable GRV");
+        LOG_ERR("  Failed to enable GRV: %d", ret);
+        bno.init_err = ret;
         goto unlock;
     }
+    LOG_INF("  GRV enabled");
 
-    /* Optional: enable temperature report (0x07) for temp_read */
+    /* Step 4: Enable temperature report (optional) */
+    LOG_INF("[init step 4] SET_FEATURE temperature...");
+    bno.init_step = 4;
+
     ret = bno08x_set_report(BNO08X_REPORT_TEMPERATURE, 1000000); /* 1 Hz */
     if (ret == 0) {
         bno.temp_enabled = true;
-        LOG_INF("Temperature report enabled");
+        LOG_INF("  Temperature report enabled");
     } else {
         bno.temp_enabled = false;
-        LOG_WRN("Temperature report not available");
+        LOG_INF("  Temperature report skipped (ret=%d)", ret);
     }
 
-    /* Wait for first sensor report on channel 3 (INPUT). */
+    /* Step 5: Wait for first sensor report on INPUT channel. */
+    LOG_INF("[init step 5] Waiting for first INPUT report...");
+    bno.init_step = 5;
+
     ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
                                 BNO08X_SHTP_CH_INPUT, 2000);
     if (ret < 0) {
-        LOG_WRN("No initial sensor report within 2s");
+        LOG_WRN("  No initial sensor report within 2s");
     } else {
-        LOG_INF("First INPUT report: id=0x%02X len=%u",
+        LOG_INF("  First INPUT report: id=0x%02X len=%u",
                 payload_len > 0 ? payload[0] : 0, payload_len);
     }
 
-    /* Fill state */
+    /* Step 6: Mark init done. */
+    LOG_INF("[init step 6] Finalizing...");
+    bno.init_step = 6;
+
     float actual_odr = 1e6f / (float)interval_us;
     bno.actual_time = 1.0f / actual_odr;
     bno.accel_time = bno.actual_time;

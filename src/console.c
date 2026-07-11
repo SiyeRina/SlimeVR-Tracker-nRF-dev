@@ -115,7 +115,10 @@ static void print_sensor(void)
 	printk("IMU: %s\n", (retained->imu_addr & 0x7F) != 0x7F ? sensor_get_sensor_imu_name() : "Not searching");
 	if (strcmp(sensor_get_sensor_imu_name(), "BNO085") == 0 || strcmp(sensor_get_sensor_imu_name(), "BNO080") == 0) {
 		extern bool bno08x_is_inited(void);
+		extern int8_t bno08x_get_init_step(void);
+		extern int8_t bno08x_get_init_err(void);
 		printk("  BNO init: %s\n", bno08x_is_inited() ? "done" : "FAILED");
+		printk("  Init step: %d  err: %d\n", bno08x_get_init_step(), bno08x_get_init_err());
 	}
 	if (retained->imu_reg != 0xFF) {
 		printk("Interface: %s\n", (retained->imu_reg & 0x80) ? "SPI" : "I2C");
