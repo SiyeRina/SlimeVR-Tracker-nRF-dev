@@ -243,37 +243,9 @@ static int bno08x_set_report(uint8_t report_id, uint32_t interval_us)
     cmd[7] = (uint8_t)((interval_us >> 16) & 0xFF);
     cmd[8] = (uint8_t)((interval_us >> 24) & 0xFF);
 
-    /* ---- Step A: GET_FEATURE first to "open" the CONTROL channel ---- */
-    uint8_t get_cmd[] = {BNO08X_CMD_GET_FEATURE, report_id};
-    LOG_INF("GET_FEATURE 0x%02X", report_id);
-    int err = shtp_send(BNO08X_SHTP_CH_CONTROL, get_cmd, sizeof(get_cmd));
-    if (err < 0) {
-        LOG_ERR("GET_FEATURE send failed: %d", err);
-        return err;
-    }
-
-    /* Listen for GET_FEATURE response (0xFC on any channel) */
-    {
-        uint8_t buf[BNO08X_SHTP_MAX_PACKET];
-        uint8_t *payload;
-        uint32_t len;
-        uint8_t ch;
-        int64_t dl = k_uptime_get() + 300;
-        while (k_uptime_get() < dl) {
-            err = shtp_recv(buf, &payload, &len, &ch);
-            if (err < 0 || len == 0) { k_msleep(5); continue; }
-            printk("[GET rsp] ch=%u len=%u pld[0]=0x%02X\n", ch, len, payload[0]);
-            if (payload[0] == BNO08X_CMD_FEATURE_RESPONSE) {
-                printk("[GET] FEATURE_RESPONSE for 0x%02X (len=%u)\n", report_id, len);
-                break;
-            }
-            k_msleep(5);
-        }
-    }
-
     /* ---- Step B: SET_FEATURE ---- */
     printk("[SET_FEATURE] report=0x%02X interval=%u us\n", report_id, interval_us);
-    err = shtp_send(BNO08X_SHTP_CH_CONTROL, cmd, sizeof(cmd));
+    int err = shtp_send(BNO08X_SHTP_CH_CONTROL, cmd, sizeof(cmd));
     if (err < 0) {
         LOG_ERR("SET_FEATURE send failed: %d", err);
         return err;
@@ -529,9 +501,11 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     bno.init_step = 5;
 
     {
-        /* Scan ALL channels for first sensor report (any report ID >= 0x02) */
-        int64_t deadline = k_uptime_get() + 2000;
+        /* Scan ALL channels for first sensor report (any report ID >= 0x02).
+         * Wait up to 5s — the BNO08x may need time to finish its FRS cycle. */
+        int64_t deadline = k_uptime_get() + 5000;
         bool got_report = false;
+        int frs_count = 0;
         LOG_INF("[init step 5] Waiting for first sensor report on any channel...");
         while (k_uptime_get() < deadline && !got_report) {
             uint8_t ch;
@@ -541,14 +515,23 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
                 continue;
             }
             uint8_t rid = payload_len > 0 ? payload[0] : 0;
-            printk("[step5] ch=%u len=%u id=0x%02X\n", ch, payload_len, rid);
+            /* Log FRS only every ~50th to reduce noise */
+            if (rid == 0xFB) {
+                frs_count++;
+                if ((frs_count % 50) == 0) {
+                    printk("[step5] FRS #%d: ch=%u len=%u\n", frs_count, ch, payload_len);
+                }
+            } else {
+                printk("[step5] ch=%u len=%u id=0x%02X\n", ch, payload_len, rid);
+            }
             if (rid >= 0x02 && rid <= 0x20) {
                 LOG_INF("  First report: ch=%u id=0x%02X len=%u", ch, rid, payload_len);
                 got_report = true;
             }
         }
         if (!got_report) {
-            LOG_WRN("  No sensor report within 2s (only non-data packets)");
+            LOG_WRN("  No sensor report within 5s (%d FRS packets drained)",
+                    frs_count);
         }
     }
 
@@ -678,29 +661,21 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
 
         /* For non-INPUT channels, check if this looks like sensor data */
         if (channel != BNO08X_SHTP_CH_INPUT) {
-            /* Known sensor report IDs: 0x02-0x15 range covers most reports */
+            /* Known sensor report IDs: 0x02-0x20 range covers most reports */
             bool is_report = (report_id >= 0x02 && report_id <= 0x20);
             if (!is_report) {
-                /* Handle FRS (0xFB) packets: send acknowledgment to unblock
-                 * the sensor's FRS transfer state. Without this, the BNO08x
-                 * keeps resending FRS data forever and never streams. */
-                if (report_id == 0xFB) {
-                    static int frs_ack_count;
-                    if (++frs_ack_count <= 10) {
-                        uint8_t ack[] = {0xFC, 0x00, 0x00};
-                        shtp_send(BNO08X_SHTP_CH_CONTROL, ack, sizeof(ack));
-                        printk("[FIFO] FRS ack #%d sent\n", frs_ack_count);
-                    }
-                } else {
-                    static int non_input;
-                    non_input++;
-                    if (non_input <= 5) {
-                        printk("[FIFO] non-data ch=%u id=0x%02X len=%u\n",
-                               channel, report_id, payload_len);
-                    }
+                /* Silently drain FRS and other non-data packets.
+                 * Timeout extended to 200ms to let the sensor finish
+                 * its FRS cycle and start streaming. */
+                static int non_input;
+                non_input++;
+                if (non_input <= 5) {
+                    printk("[FIFO] non-data #%d: ch=%u id=0x%02X len=%u\n",
+                           non_input, channel, report_id, payload_len);
                 }
-                /* Drain indefinitely — don't timeout on FRS/non-data.
-                 * The sensor will stop sending FRS once acknowledged. */
+                if (k_uptime_get() - start > 200) {
+                    break;
+                }
                 continue;
             }
             /* Fall through — treat as sensor data */
