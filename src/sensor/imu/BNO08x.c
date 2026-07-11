@@ -583,6 +583,16 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
                 if ((frs_count % 50) == 0) {
                     printk("[step5] FRS #%d: ch=%u len=%u\n", frs_count, ch, payload_len);
                 }
+                /* Hexdump first 8 FRS packets to understand protocol */
+                if (frs_count <= 8) {
+                    printk("[step5] FRS #%d payload:\n", frs_count);
+                    uint32_t dump_len = payload_len > 48 ? 48 : payload_len;
+                    for (uint32_t i = 0; i < dump_len; i++) {
+                        printk("%02X ", payload[i]);
+                        if ((i + 1) % 16 == 0) printk("\n");
+                    }
+                    if (dump_len % 16 != 0) printk("\n");
+                }
             } else {
                 printk("[step5] ch=%u len=%u id=0x%02X\n", ch, payload_len, rid);
             }
@@ -754,6 +764,13 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
                 if (non_input <= 5) {
                     printk("[FIFO] non-data #%d: ch=%u id=0x%02X len=%u\n",
                            non_input, channel, report_id, payload_len);
+                    /* Hexdump first 8 bytes of payload */
+                    uint32_t dump_len = payload_len > 8 ? 8 : payload_len;
+                    printk("  payload: ");
+                    for (uint32_t i = 0; i < dump_len; i++) {
+                        printk("%02X ", payload[i]);
+                    }
+                    printk("\n");
                 }
                 if (k_uptime_get() - start > 200) {
                     break;
