@@ -528,13 +528,28 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     LOG_INF("[init step 5] Waiting for first INPUT report...");
     bno.init_step = 5;
 
-    ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-                                BNO08X_SHTP_CH_INPUT, 2000);
-    if (ret < 0) {
-        LOG_WRN("  No initial sensor report within 2s");
-    } else {
-        LOG_INF("  First INPUT report: id=0x%02X len=%u",
-                payload_len > 0 ? payload[0] : 0, payload_len);
+    {
+        /* Scan ALL channels for first sensor report (any report ID >= 0x02) */
+        int64_t deadline = k_uptime_get() + 2000;
+        bool got_report = false;
+        LOG_INF("[init step 5] Waiting for first sensor report on any channel...");
+        while (k_uptime_get() < deadline && !got_report) {
+            uint8_t ch;
+            int rv = shtp_recv(pkt_buf, &payload, &payload_len, &ch);
+            if (rv < 0 || payload_len == 0) {
+                k_msleep(10);
+                continue;
+            }
+            uint8_t rid = payload_len > 0 ? payload[0] : 0;
+            printk("[step5] ch=%u len=%u id=0x%02X\n", ch, payload_len, rid);
+            if (rid >= 0x02 && rid <= 0x20) {
+                LOG_INF("  First report: ch=%u id=0x%02X len=%u", ch, rid, payload_len);
+                got_report = true;
+            }
+        }
+        if (!got_report) {
+            LOG_WRN("  No sensor report within 2s (only non-data packets)");
+        }
     }
 
     /* Step 6: Mark init done. */
@@ -651,28 +666,41 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
             break;
         }
 
-        if (channel != BNO08X_SHTP_CH_INPUT) {
-            static int non_input;
-            non_input++;
-            if (non_input <= 3) {
-                printk("[FIFO] non-input: ch=%u len=%u pld[0]=0x%02X\n",
-                       channel, payload_len,
-                       payload_len > 0 ? payload[0] : 0);
-            }
-            /* Graceful timeout: if we get only heartbeats for >5ms, yield to sensor loop */
-            if (k_uptime_get() - start > 5) {
-                break;
-            }
+        /* Accept sensor reports on ANY channel — not just INPUT (3).
+         * The BNO08x may send GRV data on COMMAND (0) after FRS handshake.
+         * Skip only when no valid report ID is found and it's clearly
+         * not sensor data (empty or non-report). */
+        if (payload_len == 0) {
             continue;
         }
 
         uint8_t report_id = payload[0];
 
-        /* DIAGNOSTIC: Log every INPUT channel packet */
+        /* For non-INPUT channels, check if this looks like sensor data */
+        if (channel != BNO08X_SHTP_CH_INPUT) {
+            /* Known sensor report IDs: 0x02-0x15 range covers most reports */
+            bool is_report = (report_id >= 0x02 && report_id <= 0x20);
+            if (!is_report) {
+                static int non_input;
+                non_input++;
+                if (non_input <= 5) {
+                    printk("[FIFO] non-data ch=%u id=0x%02X len=%u\n",
+                           channel, report_id, payload_len);
+                }
+                if (k_uptime_get() - start > 50) {
+                    break;
+                }
+                continue;
+            }
+            /* Fall through — treat as sensor data */
+        }
+
+        /* DIAGNOSTIC: Log every sensor data packet */
         {
             static int input_count;
             if (++input_count <= 20) {
-                LOG_INF("INPUT #%d: id=0x%02X len=%u", input_count, report_id, payload_len);
+                LOG_INF("REPORT #%d: ch=%u id=0x%02X len=%u", input_count,
+                        channel, report_id, payload_len);
                 if (payload_len > 0 && payload_len <= 32) {
                     LOG_HEXDUMP_INF(payload, payload_len, "  data");
                 }
