@@ -558,16 +558,21 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
         LOG_INF("  Temperature report skipped (ret=%d)", ret);
     }
 
-    /* Step 5: Wait for first sensor report on INPUT channel. */
-    LOG_INF("[init step 5] Waiting for first INPUT report...");
+    /* Step 5: Wait for first sensor report on INPUT channel,
+     * with proper FRS handshake to complete the sensor's FRS cycle. */
+    LOG_INF("[init step 5] FRS handshake + wait for first INPUT report...");
     bno.init_step = 6;
 
     {
-        /* Scan ALL channels for first sensor report (any report ID >= 0x02).
-         * Wait up to 5s — the BNO08x may need time to finish its FRS cycle. */
-        int64_t deadline = k_uptime_get() + 5000;
+        /* The BNO08x gets stuck in FRS mode sending 0xFB packets.
+         * Standard SH-2 protocol: host sends FRS Read Request (0xF4)
+         * for each FRS record, reads the response, then signals
+         * FRS complete with FRS Write Data (0xF7, record 0xFFFF). */
+        int64_t deadline = k_uptime_get() + 8000;
         bool got_report = false;
         int frs_count = 0;
+        int frs_requests_sent = 0;
+        bool frs_complete_sent = false;
         LOG_INF("[init step 5] Waiting for first sensor report on any channel...");
         while (k_uptime_get() < deadline && !got_report) {
             uint8_t ch;
@@ -577,13 +582,14 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
                 continue;
             }
             uint8_t rid = payload_len > 0 ? payload[0] : 0;
-            /* Log FRS only every ~50th to reduce noise */
+
             if (rid == 0xFB) {
                 frs_count++;
                 if ((frs_count % 50) == 0) {
                     printk("[step5] FRS #%d: ch=%u len=%u\n", frs_count, ch, payload_len);
                 }
-                /* Hexdump first 8 FRS packets to understand protocol */
+
+                /* Hexdump first 8 FRS packets */
                 if (frs_count <= 8) {
                     printk("[step5] FRS #%d payload:\n", frs_count);
                     uint32_t dump_len = payload_len > 48 ? 48 : payload_len;
@@ -593,17 +599,54 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
                     }
                     if (dump_len % 16 != 0) printk("\n");
                 }
+
+                /* FRS handshake: for first ~10 FRS packets, send
+                 * FRS Read Request with the record type from bytes 1-2 */
+                if (frs_requests_sent < 10 && payload_len >= 3) {
+                    uint16_t record_id = (uint16_t)payload[1]
+                                       | ((uint16_t)payload[2] << 8);
+                    uint8_t frs_req[] = {
+                        0xF4,                    /* FRS Read Request */
+                        (uint8_t)(record_id & 0xFF),
+                        (uint8_t)((record_id >> 8) & 0xFF),
+                        0x00, 0x00,              /* Read offset = 0 */
+                        0x00, 0x00               /* Block size = 0 (all) */
+                    };
+                    int send_ret = shtp_send(BNO08X_SHTP_CH_COMMAND,
+                                             frs_req, sizeof(frs_req));
+                    frs_requests_sent++;
+                    if (frs_requests_sent <= 5) {
+                        printk("[step5] FRS Read Req #%d: record=0x%04X (sent=%d)\n",
+                               frs_requests_sent, record_id, send_ret);
+                    }
+                }
+
+                /* After sending some FRS read requests, signal FRS complete */
+                if (frs_requests_sent >= 10 && !frs_complete_sent) {
+                    uint8_t frs_done[] = {
+                        0xF7,                    /* FRS Write Data */
+                        0xFF, 0xFF,              /* Record ID = 0xFFFF (end) */
+                        0x00, 0x00,              /* Offset = 0 */
+                        0x00, 0x00               /* Data length = 0 */
+                    };
+                    shtp_send(BNO08X_SHTP_CH_COMMAND,
+                              frs_done, sizeof(frs_done));
+                    frs_complete_sent = true;
+                    printk("[step5] FRS complete sent (0xF7, record=0xFFFF)\n");
+                }
+
             } else {
                 printk("[step5] ch=%u len=%u id=0x%02X\n", ch, payload_len, rid);
             }
+
             if (rid >= 0x02 && rid <= 0x20) {
                 LOG_INF("  First report: ch=%u id=0x%02X len=%u", ch, rid, payload_len);
                 got_report = true;
             }
         }
         if (!got_report) {
-            LOG_WRN("  No sensor report within 5s (%d FRS packets drained)",
-                    frs_count);
+            LOG_WRN("  No sensor report within 8s (%d FRS packets, %d read reqs)",
+                    frs_count, frs_requests_sent);
         }
     }
 
