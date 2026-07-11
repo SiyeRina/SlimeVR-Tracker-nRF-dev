@@ -431,12 +431,74 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
         LOG_INF("  Drain done: %d packets", drained);
     }
 
+    /* Step 1.5: SH-2 RESET on EXECUTABLE channel.
+     * The BNO08x SH-2 firmware can get stuck in FRS transfer mode,
+     * endlessly sending 0xFB packets and never streaming sensor data.
+     * Sending RESET (0x01) on the EXECUTABLE channel resets the SH-2
+     * state machine and clears the stuck FRS state. */
+    LOG_INF("[init step 1.5] SH-2 RESET on EXECUTABLE channel...");
+    bno.init_step = 2; /* preserve old step numbering for info display */
+
+    {
+        uint8_t reset_cmd[] = {BNO08X_CMD_RESET};
+        ret = shtp_send(BNO08X_SHTP_CH_EXECUTABLE, reset_cmd, sizeof(reset_cmd));
+        if (ret < 0) {
+            LOG_ERR("  RESET send failed: %d", ret);
+            bno.init_err = ret;
+            goto unlock;
+        }
+
+        /* Wait for RESET_COMPLETE (0x01) on COMMAND channel.
+         * The sensor acknowledges the reset with the same 0x01 on ch=0. */
+        int64_t reset_deadline = k_uptime_get() + 1000;
+        bool reset_done = false;
+        while (k_uptime_get() < reset_deadline && !reset_done) {
+            uint8_t ch;
+            ret = shtp_recv(pkt_buf, &payload, &payload_len, &ch);
+            if (ret < 0 || payload_len == 0) {
+                k_msleep(5);
+                continue;
+            }
+            LOG_INF("  Post-reset pkt: ch=%u len=%u pld[0]=0x%02X",
+                    ch, payload_len,
+                    payload_len > 0 ? payload[0] : 0);
+            if (ch == BNO08X_SHTP_CH_COMMAND && payload[0] == BNO08X_CMD_RESET) {
+                LOG_INF("  RESET complete acknowledged");
+                reset_done = true;
+            }
+        }
+        if (!reset_done) {
+            LOG_WRN("  No RESET_COMPLETE within 1s (non-fatal, proceeding)");
+        }
+
+        /* Drain post-reset advertisement traffic (sensor re-sends boot ad).
+         * Drain until quiet for 100ms, max 500ms. */
+        LOG_INF("  Draining post-reset advertisement...");
+        {
+            int64_t drain_deadline2 = k_uptime_get() + 500;
+            int64_t last_pkt2 = k_uptime_get();
+            int drained2 = 0;
+            while (k_uptime_get() < drain_deadline2) {
+                uint8_t ch;
+                int rv = shtp_recv(pkt_buf, &payload, &payload_len, &ch);
+                if (rv < 0 || payload_len == 0) {
+                    if ((k_uptime_get() - last_pkt2) > 100) break;
+                    k_msleep(10);
+                    continue;
+                }
+                last_pkt2 = k_uptime_get();
+                drained2++;
+            }
+            LOG_INF("  Post-reset drain done: %d packets", drained2);
+        }
+    }
+
     /* Step 2: Product ID handshake.
      * Send 0xF9 on COMMAND channel.  This tells the SH-2 firmware the
      * host is present and ready.  Response may be 0xF8 (Product ID)
      * or 0x01 (heartbeat) — either confirms the handshake. */
     LOG_INF("[init step 2] Product ID handshake...");
-    bno.init_step = 2;
+    bno.init_step = 3;
 
     {
         uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
@@ -473,7 +535,7 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
     if (interval_us < 2500) interval_us = 2500;
 
     LOG_INF("[init step 3] SET_FEATURE GRV (interval=%u us)...", interval_us);
-    bno.init_step = 3;
+    bno.init_step = 4;
 
     ret = bno08x_set_report(BNO08X_REPORT_GAME_ROTATION_VECTOR, interval_us);
     if (ret < 0) {
@@ -485,7 +547,7 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
 
     /* Step 4: Enable temperature report (optional) */
     LOG_INF("[init step 4] SET_FEATURE temperature...");
-    bno.init_step = 4;
+    bno.init_step = 5;
 
     ret = bno08x_set_report(BNO08X_REPORT_TEMPERATURE, 1000000); /* 1 Hz */
     if (ret == 0) {
@@ -498,7 +560,7 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
 
     /* Step 5: Wait for first sensor report on INPUT channel. */
     LOG_INF("[init step 5] Waiting for first INPUT report...");
-    bno.init_step = 5;
+    bno.init_step = 6;
 
     {
         /* Scan ALL channels for first sensor report (any report ID >= 0x02).
@@ -537,7 +599,7 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
 
     /* Step 6: Mark init done. */
     LOG_INF("[init step 6] Finalizing...");
-    bno.init_step = 6;
+    bno.init_step = 7;
 
     float actual_odr = 1e6f / (float)interval_us;
     bno.actual_time = 1.0f / actual_odr;
