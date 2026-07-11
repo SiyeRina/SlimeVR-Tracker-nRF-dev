@@ -681,15 +681,26 @@ uint16_t bno08x_fifo_read(uint8_t *rawData, uint16_t len)
             /* Known sensor report IDs: 0x02-0x15 range covers most reports */
             bool is_report = (report_id >= 0x02 && report_id <= 0x20);
             if (!is_report) {
-                static int non_input;
-                non_input++;
-                if (non_input <= 5) {
-                    printk("[FIFO] non-data ch=%u id=0x%02X len=%u\n",
-                           channel, report_id, payload_len);
+                /* Handle FRS (0xFB) packets: send acknowledgment to unblock
+                 * the sensor's FRS transfer state. Without this, the BNO08x
+                 * keeps resending FRS data forever and never streams. */
+                if (report_id == 0xFB) {
+                    static int frs_ack_count;
+                    if (++frs_ack_count <= 10) {
+                        uint8_t ack[] = {0xFC, 0x00, 0x00};
+                        shtp_send(BNO08X_SHTP_CH_CONTROL, ack, sizeof(ack));
+                        printk("[FIFO] FRS ack #%d sent\n", frs_ack_count);
+                    }
+                } else {
+                    static int non_input;
+                    non_input++;
+                    if (non_input <= 5) {
+                        printk("[FIFO] non-data ch=%u id=0x%02X len=%u\n",
+                               channel, report_id, payload_len);
+                    }
                 }
-                if (k_uptime_get() - start > 50) {
-                    break;
-                }
+                /* Drain indefinitely — don't timeout on FRS/non-data.
+                 * The sensor will stop sending FRS once acknowledged. */
                 continue;
             }
             /* Fall through — treat as sensor data */
