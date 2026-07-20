@@ -116,32 +116,33 @@ static uint32_t shtp_build_packet(uint8_t *buf, uint8_t channel,
                                   uint8_t seq, const uint8_t *payload,
                                   uint32_t payload_len)
 {
-    /* SHTP 4-byte header — DOWNLINK format (host → BNO08x):
-     *   [0]       = payload length LSB
-     *   [1]       = len MSB (bits 5:0), bits 7:6 reserved
-     *   [2]       = channel (0-3)
+    /* SHTP 4-byte header — SAME format for both DOWNLINK and UPLINK
+     * (per official spec 1000-3535 v1.10, Figure 2):
+     *   [0]       = total length LSB  (cargo + 4-byte header)
+     *   [1]       = length MSB (bits 14:8, bit 15 = continuation flag)
+     *   [2]       = channel (0-5)
      *   [3]       = sequence number
      *
-     * NOTE: This is DIFFERENT from the uplink (sensor → host) format,
-     * where the channel is encoded in byte[1] bits 7:6 and byte[2]
-     * carries the sequence number.  Using the uplink layout for
-     * downlink packets routes all commands to the wrong channel. */
-    buf[0] = (uint8_t)(payload_len & 0xFF);
-    buf[1] = (uint8_t)((payload_len >> 8) & 0x3F);
+     * Length includes the 4-byte header itself: total = payload + 4.
+     * No CRC-8 is appended — the official SHTP spec does not define
+     * CRC for I2C transport; the I2C bus has its own ACK mechanism. */
+    uint32_t pkt_len = BNO08X_SHTP_HEADER_SIZE + payload_len;
+    buf[0] = (uint8_t)(pkt_len & 0xFF);
+    buf[1] = (uint8_t)((pkt_len >> 8) & 0x7F); /* bits 14:8 = length, bit 15 = 0 (no continuation) */
     buf[2] = channel;
     buf[3] = seq;
 
     memcpy(buf + BNO08X_SHTP_HEADER_SIZE, payload, payload_len);
-    uint32_t total = BNO08X_SHTP_HEADER_SIZE + payload_len;
-    buf[total] = shtp_crc8(buf, total);
-    return total + 1;
+    return BNO08X_SHTP_HEADER_SIZE + payload_len;
 }
 
 static int shtp_send(uint8_t channel, const uint8_t *payload, uint32_t payload_len)
 {
-    static uint8_t tx_seq;
+    /* Per-channel sequence numbers (spec 1000-3535 §2.2.1: "Each channel
+     * and each direction has its own sequence number"). Channels 0-5. */
+    static uint8_t tx_seq[6];
     uint8_t pkt[BNO08X_SHTP_MAX_PACKET];
-    uint32_t total = shtp_build_packet(pkt, channel, tx_seq++, payload, payload_len);
+    uint32_t total = shtp_build_packet(pkt, channel, tx_seq[channel]++, payload, payload_len);
     return ssi_write(SENSOR_INTERFACE_DEV_IMU, pkt, total);
 }
 
@@ -158,21 +159,26 @@ static int shtp_recv(uint8_t *buf, uint8_t **payload, uint32_t *payload_len, uin
     if (err < 0)
         return -1;
 
-    /* SHTP header (4 bytes):
-     *   [0]       = payload length LSB
-     *   [1]       = len MSB (bits 5:0) | channel (bits 7:6)
-     *   [2]       = sequence number
-     *   [3]       = continuation byte (0x00 for single segment)
-     * Payload starts at buf[4]. */
-    uint32_t pld_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
+    /* SHTP header (4 bytes) — SAME format as downlink:
+     *   [0]       = total length LSB  (cargo + 4-byte header)
+     *   [1]       = length MSB (bits 14:8, bit 15 = continuation flag)
+     *   [2]       = channel (0-5)
+     *   [3]       = sequence number
+     * Payload starts at buf[4].
+     * Actual payload length = total_length - 4. */
+    uint32_t total_len = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x7F) << 8);
+    if (total_len < BNO08X_SHTP_HEADER_SIZE) {
+        return -1; /* bogus header */
+    }
+    uint32_t pld_len = total_len - BNO08X_SHTP_HEADER_SIZE;
     if (pld_len > BNO08X_SHTP_MAX_PAYLOAD) {
-        LOG_WRN("Invalid payload length: %u", pld_len);
+        LOG_WRN("Invalid payload length: %u (total=%u)", pld_len, total_len);
         return -1;
     }
 
     *payload = buf + 4;
     *payload_len = pld_len;
-    *channel = (buf[1] >> 6) & 0x03;
+    *channel = buf[2];
     return 0;
 }
 
@@ -1067,9 +1073,9 @@ retry:
             uint8_t buf[BNO08X_SHTP_MAX_PACKET];
             int err = i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET);
             if (err < 0) { k_msleep(50); continue; }
-            uint32_t pl = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
+            uint32_t pl = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x7F) << 8);
             if (pl < 4 || pl > BNO08X_SHTP_MAX_PAYLOAD) { k_msleep(10); continue; }
-            uint8_t ch = (buf[1] >> 6) & 0x03;
+            uint8_t ch = buf[2]; /* SHTP channel per official spec 1000-3535 Fig 2 */
             uint8_t *pld = buf + 4; /* SHTP header is 4 bytes */
 
             if (pl > 100) {
@@ -1111,7 +1117,7 @@ retry:
                     if (i2c_read_dt(&tmp_dev, buf, BNO08X_SHTP_MAX_PACKET) < 0) {
                         k_msleep(20); continue;
                     }
-                    uint32_t pl = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x3F) << 8);
+                    uint32_t pl = (uint32_t)buf[0] | ((uint32_t)(buf[1] & 0x7F) << 8);
                     if (pl >= 4 && pl <= BNO08X_SHTP_MAX_PAYLOAD) {
                         LOG_INF("BNO08x woken at 0x%02X (len=%u)", addr, pl);
                         found = true;
