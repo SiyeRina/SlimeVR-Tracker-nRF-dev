@@ -206,14 +206,15 @@ int bno08x_read_product_id(uint8_t *pid_low, uint8_t *pid_high)
 {
     uint8_t pkt_buf[BNO08X_SHTP_MAX_PACKET];
     uint8_t cmd[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
-    int err = shtp_send(BNO08X_SHTP_CH_COMMAND, cmd, sizeof(cmd));
+    /* SH-2 control commands go on CONTROL channel (per SparkFun ref impl & SHTP spec) */
+    int err = shtp_send(BNO08X_SHTP_CH_CONTROL, cmd, sizeof(cmd));
     if (err < 0)
         return -1;
 
     uint8_t *payload;
     uint32_t payload_len;
     err = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-                                BNO08X_SHTP_CH_COMMAND, 200);
+                                BNO08X_SHTP_CH_CONTROL, 200);
     if (err < 0)
         return -1;
 
@@ -511,16 +512,15 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
         }
     }
 
-    /* Step 2: Product ID handshake.
-     * Send 0xF9 on COMMAND channel.  This tells the SH-2 firmware the
-     * host is present and ready.  Response may be 0xF8 (Product ID)
-     * or 0x01 (heartbeat) — either confirms the handshake. */
+    /* Step 2: Product ID handshake on CONTROL channel.
+     * Send 0xF9 on CONTROL.  SH-2 control commands go on CONTROL
+     * channel per the SparkFun reference implementation and SHTP spec. */
     LOG_INF("[init step 2] Product ID handshake...");
     bno.init_step = 3;
 
     {
         uint8_t pid_req[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
-        ret = shtp_send(BNO08X_SHTP_CH_COMMAND, pid_req, sizeof(pid_req));
+        ret = shtp_send(BNO08X_SHTP_CH_CONTROL, pid_req, sizeof(pid_req));
         if (ret < 0) {
             LOG_ERR("  PID request send failed: %d", ret);
             bno.init_err = ret;
@@ -529,13 +529,13 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
 
         uint8_t ch;
         ret = shtp_wait_for_channel(pkt_buf, &payload, &payload_len,
-                                    BNO08X_SHTP_CH_COMMAND, 500);
+                                    BNO08X_SHTP_CH_CONTROL, 500);
         if (ret < 0) {
             LOG_WRN("  No response to PID request");
             /* Non-fatal: proceed anyway */
         } else {
             LOG_INF("  PID response: ch=%u len=%u pld[0]=0x%02X",
-                    BNO08X_SHTP_CH_COMMAND, payload_len,
+                    BNO08X_SHTP_CH_CONTROL, payload_len,
                     payload_len > 0 ? payload[0] : 0);
             if (payload_len >= 4) {
                 LOG_HEXDUMP_INF(payload, payload_len < 32 ? payload_len : 32,
@@ -630,7 +630,7 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
                         0x00, 0x00,              /* Read offset = 0 */
                         0x00, 0x00               /* Block size = 0 (all) */
                     };
-                    int send_ret = shtp_send(BNO08X_SHTP_CH_COMMAND,
+                    int send_ret = shtp_send(BNO08X_SHTP_CH_CONTROL,
                                              frs_req, sizeof(frs_req));
                     frs_requests_sent++;
                     if (frs_requests_sent <= 5) {
@@ -647,7 +647,7 @@ int bno08x_init(float clock_rate, float accel_time, float gyro_time,
                         0x00, 0x00,              /* Offset = 0 */
                         0x00, 0x00               /* Data length = 0 */
                     };
-                    shtp_send(BNO08X_SHTP_CH_COMMAND,
+                    shtp_send(BNO08X_SHTP_CH_CONTROL,
                               frs_done, sizeof(frs_done));
                     frs_complete_sent = true;
                     printk("[step5] FRS complete sent (0xF7, record=0xFFFF)\n");
@@ -1109,7 +1109,7 @@ retry:
              * We do NOT send RESET here; bno08x_init handles that. */
             uint8_t cmd[] = {BNO08X_CMD_PRODUCT_ID_REQUEST, 0x00};
             uint8_t tx[BNO08X_SHTP_MAX_PACKET];
-            uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_COMMAND, 0, cmd, sizeof(cmd));
+            uint32_t txlen = shtp_build_packet(tx, BNO08X_SHTP_CH_CONTROL, 0, cmd, sizeof(cmd));
             if (i2c_write_dt(&tmp_dev, tx, txlen) == 0) {
                 int64_t wake_dl = k_uptime_get() + 400;
                 while (k_uptime_get() < wake_dl) {
